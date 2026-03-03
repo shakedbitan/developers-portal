@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Grafana",
+    "url": "http://grafana.internal"
+  },
+  {
+    "name": "Kibana",
+    "url": "http://kibana.internal"
+  },
+  {
+    "name": "ArgoCD",
+    "url": "http://argocd.internal"
+  },
+  {
+    "name": "Harbor Registry",
+    "url": "http://harbor.internal"
+  },
+  {
+    "name": "Confluence",
+    "url": "http://confluence.internal"
+  },
+  {
+    "name": "Jira",
+    "url": "http://jira.internal"
+  }
+]

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{{ title }}</title>
+  <!-- Fonts: using local system fonts — safe for closed/air-gapped networks.
+       If you want custom fonts, download the woff2 files, place them in
+       static/fonts/, and add @font-face rules to style.css instead. -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+  <div class="noise"></div>
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header>
+    <div class="header-inner">
+      <div class="logo-area">
+        <div class="logo-mark"><span class="lb">[</span><span class="ls">/</span><span class="lb">]</span></div>
+        <div class="logo-text">
+          <span class="team-label">{{ team }}</span>
+          <span class="portal-name">{{ title }}</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <span class="dot"></span>
+        <span class="status-txt">internal network</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Main ───────────────────────────────────────────── -->
+  <main>
+
+    <!-- ══ WEB APPS SECTION ═══════════════════════════════ -->
+    <section class="portal-section" id="section-webapps">
+      <div class="section-header">
+        <h2 class="section-title">Web Apps</h2>
+        <span class="section-count">{{ sites | length }}</span>
+        <div class="scroll-hint">
+          <button class="scroll-btn" onclick="scrollRow('webapps-row', -1)">‹</button>
+          <button class="scroll-btn" onclick="scrollRow('webapps-row', 1)">›</button>
+        </div>
+      </div>
+
+      <div class="cards-row" id="webapps-row">
+        {% for site in sites %}
+        <a class="site-card" href="{{ site.url }}" target="_blank" rel="noopener noreferrer"
+           title="{{ site.name }}">
+          <div class="card-img-wrap">
+            <img
+              class="site-favicon"
+              src="{{ site.image_url }}"
+              alt="{{ site.name }}"
+              onerror="this.src='/static/icons/_placeholder.svg'"
+            />
+          </div>
+          <div class="card-label">
+            <span class="card-name">{{ site.name }}</span>
+            <span class="card-url">{{ site.url }}</span>
+          </div>
+          <span class="card-ext-icon">↗</span>
+        </a>
+        {% endfor %}
+      </div>
+    </section>
+
+    <!-- ══ APP DOWNLOADS SECTION ══════════════════════════ -->
+    <section class="portal-section" id="section-installs">
+      <div class="section-header">
+        <h2 class="section-title">App Downloads</h2>
+        {% if smb_configured %}
+          <span class="section-count">{{ apps | length }}</span>
+        {% else %}
+          <span class="badge-warn">SMB not configured</span>
+        {% endif %}
+        <div class="scroll-hint">
+          <button class="scroll-btn" onclick="scrollRow('installs-row', -1)">‹</button>
+          <button class="scroll-btn" onclick="scrollRow('installs-row', 1)">›</button>
+        </div>
+      </div>
+
+      <div class="cards-row" id="installs-row">
+        {% if apps %}
+          {% for app in apps %}
+          <button class="app-card" onclick="openVersionModal({{ loop.index0 }})"
+                  title="{{ app.display_name }}">
+            <div class="card-img-wrap">
+              <img src="{{ app.icon_url }}" alt="{{ app.display_name }}"
+                   onerror="this.src='/static/icons/_placeholder.svg'"/>
+            </div>
+            <div class="card-label">
+              <span class="card-name">{{ app.display_name }}</span>
+              <span class="card-meta">{{ app.versions | length }} version{{ 's' if app.versions | length != 1 }}</span>
+            </div>
+          </button>
+          {% endfor %}
+        {% else %}
+          <div class="empty-state">
+            {% if smb_configured %}
+              <span>No installers found on the share.</span>
+            {% else %}
+              <span>Configure <code>SMB_SERVER</code> to connect your install share.</span>
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <span class="mono">{{ title }} // {{ team }} // internal use only</span>
+  </footer>
+
+  <!-- ══ VERSION MODAL ══════════════════════════════════════ -->
+  <div class="modal-overlay" id="modal-overlay" onclick="closeModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-area">
+          <img id="modal-icon" src="" alt="" onerror="this.src='/static/icons/_placeholder.svg'"/>
+          <div>
+            <div class="modal-app-name" id="modal-app-name"></div>
+            <div class="modal-sub">Select a version to download</div>
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <ul class="version-list" id="version-list"></ul>
+    </div>
+  </div>
+
+  <!-- ══ App data for JS ════════════════════════════════════ -->
+  <!-- Theme toggle button -->
+  <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Switch theme">
+    <span id="theme-icon">&#127800;</span>
+    <span id="theme-label">Pink</span>
+  </button>
+
+  <script>
+    const APPS = {{ apps | tojson }};
+  </script>
+  <script src="{{ url_for('static', filename='js/portal.js') }}"></script>
+
+</body>
+</html>

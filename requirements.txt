@@ -1,7 +1,7 @@
 flask==3.0.3
 gunicorn==22.0.0
 smbprotocol==1.13.0
-Pillow==10.3.0
+Pillow>=10.3.0
 icoextract==0.1.4
 requests==2.31.0
 urllib3==2.2.1

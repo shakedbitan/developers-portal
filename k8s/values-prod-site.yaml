@@ -1,0 +1,36 @@
+apps:
+
+  configMaps:
+    eden-cm:
+      data:
+        SMB_SERVER=""
+        SMB_SHARE="installs"
+        SMB_BASE_PATH=""
+        SMB_CACHE_TTL="60"
+      envTo:
+        eden
+    
+  sealedSecrets:
+    eden-secrets:
+      data:
+        SMB_USER="aaaaaaaaaaaaaa"
+        SMB_PASSWORD="aaaaaaaaaaaaaa"
+        SMB_DOMAIN="aaaaaaaaaaaaaa"
+      envTo:
+        eden
+
+  ingresses:
+    eden:
+      hosts: 
+        - "eden.com"
+          paths:
+            - "/"
+      tls:
+        hosts:
+          - "eden.com"
+          - "eden"
+        crt: "aaaaaaaaaaaaaa"
+        key: "aaaaaaaaaaaaaa"
+      annotations:
+        nginx.ingress.kubernetes.io/ssl-redirect: "true"
+        

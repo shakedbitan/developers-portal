@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-SITES_FILE   = os.environ.get("SITES_FILE",   "sites.json")
+SITES_FILE   = "sites.json"
 PORTAL_TITLE = os.environ.get("PORTAL_TITLE", "Eden")
 MINI_TITLE    = os.environ.get("MINI_TITLE", "Welcome to")
 

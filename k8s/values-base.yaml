@@ -1,0 +1,7 @@
+apps:
+
+  deployments:
+    eden:
+      image: 
+        name:genesys/eden
+      

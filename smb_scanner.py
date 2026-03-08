@@ -28,13 +28,13 @@ import smbclient  # smbprotocol
 logger = logging.getLogger(__name__)
 
 # ── Config (read from env) ────────────────────────────────────────────────────
-SMB_SERVER   = os.environ.get("SMB_SERVER", "")          # e.g. "fileserver.corp"
-SMB_SHARE    = os.environ.get("SMB_SHARE", "installs")   # share name (no backslashes)
-SMB_BASE_PATH = os.environ.get("SMB_BASE_PATH", "")      # sub-folder inside share, optional
-SMB_USER     = os.environ.get("SMB_USER", "")
-SMB_PASSWORD = os.environ.get("SMB_PASSWORD", "")
-SMB_DOMAIN   = os.environ.get("SMB_DOMAIN", "")
-CACHE_TTL    = int(os.environ.get("SMB_CACHE_TTL", "60"))  # seconds
+SMB_SERVER   = os.environ.get("SMB_SERVER")          # e.g. "fileserver.corp"
+SMB_SHARE    = os.environ.get("SMB_SHARE")   # share name (no backslashes)
+SMB_BASE_PATH = os.environ.get("SMB_BASE_PATH")      # sub-folder inside share, optional
+SMB_USER     = os.environ.get("SMB_USER")
+SMB_PASSWORD = os.environ.get("SMB_PASSWORD")
+SMB_DOMAIN   = os.environ.get("SMB_DOMAIN")
+CACHE_TTL    = int(os.environ.get("SMB_CACHE_TTL", "60"))  # remove seconds
 
 # Recognised installer extensions
 INSTALLER_EXTS = {".exe", ".msi", ".msix", ".appx", ".zip", ".7z"}

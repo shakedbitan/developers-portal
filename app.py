@@ -28,8 +28,8 @@ app = Flask(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SITES_FILE   = os.environ.get("SITES_FILE",   "sites.json")
-PORTAL_TITLE = os.environ.get("PORTAL_TITLE", "Dev Portal")
-TEAM_NAME    = os.environ.get("TEAM_NAME",    "Engineering")
+PORTAL_TITLE = os.environ.get("PORTAL_TITLE", "Eden")
+MINI_TITLE    = os.environ.get("MINI_TITLE", "Welcome to")
 
 
 SITE_IMAGES_DIR  = os.path.join("static", "site-images")
@@ -115,7 +115,7 @@ def index():
         sites=sites,
         apps=apps,
         title=PORTAL_TITLE,
-        team=TEAM_NAME,
+        team=MINI_TITLE,
         smb_configured=bool(os.environ.get("SMB_SERVER")),
     )
 

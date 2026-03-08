@@ -1,6 +1,9 @@
 /* ── Reset & Variables ────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+html { background: #080b12; }
+html.theme-light { background: #fafafa; }
+
 :root {
   --bg:          #080b12;
   --surface:     #0e1320;
@@ -392,36 +395,66 @@ footer { border-top: 1px solid var(--border); padding: 1.4rem 2.5rem; text-align
   .portal-name { font-size: 1.3rem; }
 }
 
-/* ── Pink theme (baby pink) ───────────────────────────── */
-body.theme-pink {
-  --bg:          #fff0f6;
-  --surface:     #ffe4f0;
-  --surface2:    #ffd6e8;
-  --surface3:    #ffc8e0;
-  --border:      #f9a8cc;
-  --border2:     #f472b0;
-  --accent:      #db2777;
-  --accent2:     #be185d;
-  --accent-glow: rgba(219, 39, 119, 0.15);
-  --text:        #4a0728;
-  --text-muted:  #9d174d;
-  --text-dim:    #f0abcc;
+/* ── Light theme ───────────────────────────────────── */
+body.theme-light {
+  --bg:          #fafafa;
+  --surface:     #ffffff;
+  --surface2:    #f5f5f5;
+  --surface3:    #efefef;
+  --border:      #e2e2e2;
+  --border2:     #c0c0c0;
+  --accent:      #2563eb;
+  --accent2:     #1d4ed8;
+  --accent-glow: rgba(37, 99, 235, 0.12);
+  --text:        #0f172a;
+  --text-muted:  #475569;
+  --text-dim:    #94a3b8;
   --warn:        #d97706;
 }
-body.theme-pink header { background: rgba(255, 240, 246, 0.92); }
-body.theme-pink .site-card::before,
-body.theme-pink .app-card::before {
-  background: linear-gradient(135deg, rgba(219,39,119,.06), rgba(190,24,93,.04));
+body.theme-light header { background: rgba(250, 250, 250, 0.95); }
+body.theme-light .site-card::before,
+body.theme-light .app-card::before {
+  background: linear-gradient(135deg, rgba(37,99,235,.05), rgba(29,78,216,.03));
 }
-body.theme-pink .site-card:hover,
-body.theme-pink .app-card:hover {
-  box-shadow: 0 12px 36px rgba(219,39,119,.15), 0 0 0 1px rgba(219,39,119,.12);
+body.theme-light .site-card:hover,
+body.theme-light .app-card:hover {
+  box-shadow: 0 12px 36px rgba(37,99,235,.12), 0 0 0 1px rgba(37,99,235,.1);
 }
-body.theme-pink .dl-btn { color: var(--accent); border-color: var(--border2); }
-body.theme-pink .dl-btn:hover { background: rgba(219,39,119,.08); }
-body.theme-pink .badge-web { background: rgba(219,39,119,.1); color: var(--accent); border-color: rgba(219,39,119,.3); }
-body.theme-pink .badge-app { background: rgba(190,24,93,.1);  color: var(--accent2); border-color: rgba(190,24,93,.3); }
+body.theme-light .dl-btn { color: var(--accent); border-color: var(--border2); }
+body.theme-light .dl-btn:hover { background: rgba(37,99,235,.08); }
+body.theme-light .badge-web { background: rgba(37,99,235,.1); color: var(--accent); border-color: rgba(37,99,235,.3); }
+body.theme-light .badge-app { background: rgba(29,78,216,.1); color: var(--accent2); border-color: rgba(29,78,216,.3); }
 
+body.theme-light .noise {
+  display: none;
+}
+
+body.theme-light .modal-overlay {
+  background: rgba(15, 23, 42, 0.6);
+}
+
+body.theme-light .search-inner {
+  background: #ffffff;
+}
+
+body.theme-light .search-results {
+  background: #ffffff;
+}
+
+body.theme-light .modal {
+  background: #ffffff;
+  border-color: var(--border);
+  box-shadow: 0 32px 80px rgba(15,23,42,0.2);
+}
+
+body.theme-light .scroll-btn {
+  background: #ffffff;
+}
+
+body.theme-light .theme-toggle {
+  background: #ffffff;
+  box-shadow: 0 4px 20px rgba(15,23,42,0.15);
+}
 /* ── Theme toggle button ──────────────────────────────── */
 .theme-toggle {
   position: fixed; bottom: 28px; right: 28px; z-index: 500;

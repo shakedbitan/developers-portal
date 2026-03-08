@@ -15,8 +15,8 @@ COPY . .
 # Create icon cache directory
 RUN mkdir -p static/icons/_cache
 
-ENV PORTAL_TITLE="Dev Portal"
-ENV TEAM_NAME="Engineering"
+# ENV PORTAL_TITLE="Dev Portal"
+# ENV TEAM_NAME="Engineering"
 ENV SITES_FILE="sites.json"
 ENV PORT=5000
 

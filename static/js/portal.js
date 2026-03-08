@@ -5,7 +5,7 @@
  * - Search bar (sites + apps)
  * - Version picker modal
  * - Live app data refresh
- * - Theme toggle (dark / baby pink)
+ * - Theme toggle (dark / light)
  */
 
 // ── Scroll helpers ────────────────────────────────────────────────────────────
@@ -210,19 +210,21 @@ const THEME_KEY = "devportal-theme";
 function applyTheme(theme) {
   const icon  = document.getElementById("theme-icon");
   const label = document.getElementById("theme-label");
-  if (theme === "pink") {
-    document.body.classList.add("theme-pink");
+  if (theme === "light") {
+    document.body.classList.add("theme-light");
+    document.documentElement.classList.add("theme-light");    
     icon.textContent  = "🌑";
     label.textContent = "Dark";
   } else {
-    document.body.classList.remove("theme-pink");
-    icon.textContent  = "🌸";
-    label.textContent = "Pink";
+    document.body.classList.remove("theme-light");
+    document.documentElement.classList.remove("theme-light"); 
+    icon.textContent  = "☀️";
+    label.textContent = "Light";
   }
 }
 
 function toggleTheme() {
-  const next = document.body.classList.contains("theme-pink") ? "dark" : "pink";
+  const next = document.body.classList.contains("theme-light") ? "dark" : "light";
   try { localStorage.setItem(THEME_KEY, next); } catch (_) {}
   applyTheme(next);
 }

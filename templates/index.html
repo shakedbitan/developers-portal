@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+  <div class="noise"></div>
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header>
+    <div class="header-inner">
+      <div class="logo-area">
+        <div class="logo-mark"><span class="lb">[</span><span class="ls">/</span><span class="lb">]</span></div>
+        <div class="logo-text">
+          <span class="team-label">{{ team }}</span>
+          <span class="portal-name">{{ title }}</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Search bar ─────────────────────────────────────── -->
+  <div class="search-wrap">
+    <div class="search-inner">
+      <span class="search-icon">⌕</span>
+      <input
+        id="search-input"
+        class="search-input"
+        type="text"
+        placeholder="Search apps and websites..."
+        autocomplete="off"
+        oninput="handleSearch(this.value)"
+      />
+      <button class="search-clear" id="search-clear" onclick="clearSearch()" title="Clear">✕</button>
+    </div>
+    <div class="search-results" id="search-results"></div>
+  </div>
+
+  <!-- ── Main ───────────────────────────────────────────── -->
+  <main>
+
+    <!-- ══ WEB APPS SECTION ═══════════════════════════════ -->
+    <section class="portal-section" id="section-webapps">
+      <div class="section-header">
+        <h2 class="section-title">Web Apps</h2>
+        <span class="section-count">{{ sites | length }}</span>
+        <div class="scroll-hint">
+          <button class="scroll-btn" onclick="scrollOuter('webapps-outer', -1)">‹</button>
+          <button class="scroll-btn" onclick="scrollOuter('webapps-outer', 1)">›</button>
+        </div>
+      </div>
+
+      <!-- outer scrolls horizontally; two inner rows stack vertically -->
+      <div class="cards-scroll-outer" id="webapps-outer">
+        <div class="two-row-wrap">
+
+          <!-- Row 1: items 0, 2, 4, 6 ... -->
+          <div class="cards-row">
+            {% for site in sites %}{% if loop.index0 % 2 == 0 %}
+            <a class="site-card" href="{{ site.url }}" target="_blank" rel="noopener noreferrer"
+               data-name="{{ site.name | lower }}" data-url="{{ site.url | lower }}">
+              <div class="card-img-wrap">
+                <img class="site-favicon" src="{{ site.image_url }}" alt="{{ site.name }}"
+                     onerror="this.src='/static/icons/_placeholder.svg'"/>
+              </div>
+              <div class="card-label">
+                <span class="card-name">{{ site.name }}</span>
+                <span class="card-url">{{ site.url }}</span>
+              </div>
+              <span class="card-ext-icon">↗</span>
+            </a>
+            {% endif %}{% endfor %}
+          </div>
+
+          <!-- Row 2: items 1, 3, 5, 7 ... -->
+          <div class="cards-row">
+            {% for site in sites %}{% if loop.index0 % 2 == 1 %}
+            <a class="site-card" href="{{ site.url }}" target="_blank" rel="noopener noreferrer"
+               data-name="{{ site.name | lower }}" data-url="{{ site.url | lower }}">
+              <div class="card-img-wrap">
+                <img class="site-favicon" src="{{ site.image_url }}" alt="{{ site.name }}"
+                     onerror="this.src='/static/icons/_placeholder.svg'"/>
+              </div>
+              <div class="card-label">
+                <span class="card-name">{{ site.name }}</span>
+                <span class="card-url">{{ site.url }}</span>
+              </div>
+              <span class="card-ext-icon">↗</span>
+            </a>
+            {% endif %}{% endfor %}
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ APP DOWNLOADS SECTION ══════════════════════════ -->
+    <section class="portal-section" id="section-installs">
+      <div class="section-header">
+        <h2 class="section-title">App Downloads</h2>
+        {% if smb_configured %}
+          <span class="section-count">{{ apps | length }}</span>
+        {% else %}
+          <span class="badge-warn">SMB not configured</span>
+        {% endif %}
+        <div class="scroll-hint">
+          <button class="scroll-btn" onclick="scrollOuter('installs-outer', -1)">‹</button>
+          <button class="scroll-btn" onclick="scrollOuter('installs-outer', 1)">›</button>
+        </div>
+      </div>
+
+      <div class="cards-scroll-outer" id="installs-outer">
+        {% if apps %}
+        <div class="two-row-wrap">
+
+          <!-- Row 1: items 0, 2, 4, 6 ... -->
+          <div class="cards-row">
+            {% for app in apps %}{% if loop.index0 % 2 == 0 %}
+            <button class="app-card" onclick="openVersionModal({{ loop.index0 }})"
+                    data-name="{{ app.display_name | lower }}" data-index="{{ loop.index0 }}">
+              <div class="card-img-wrap">
+                <img src="{{ app.icon_url }}" alt="{{ app.display_name }}"
+                     onerror="this.src='/static/icons/_placeholder.svg'"/>
+              </div>
+              <div class="card-label">
+                <span class="card-name">{{ app.display_name }}</span>
+                <span class="card-meta">{{ app.versions | length }} version{{ 's' if app.versions | length != 1 }}</span>
+              </div>
+            </button>
+            {% endif %}{% endfor %}
+          </div>
+
+          <!-- Row 2: items 1, 3, 5, 7 ... -->
+          <div class="cards-row">
+            {% for app in apps %}{% if loop.index0 % 2 == 1 %}
+            <button class="app-card" onclick="openVersionModal({{ loop.index0 }})"
+                    data-name="{{ app.display_name | lower }}" data-index="{{ loop.index0 }}">
+              <div class="card-img-wrap">
+                <img src="{{ app.icon_url }}" alt="{{ app.display_name }}"
+                     onerror="this.src='/static/icons/_placeholder.svg'"/>
+              </div>
+              <div class="card-label">
+                <span class="card-name">{{ app.display_name }}</span>
+                <span class="card-meta">{{ app.versions | length }} version{{ 's' if app.versions | length != 1 }}</span>
+              </div>
+            </button>
+            {% endif %}{% endfor %}
+          </div>
+
+        </div>
+        {% else %}
+        <div class="empty-state">
+          {% if smb_configured %}
+            <span>No installers found on the share.</span>
+          {% else %}
+            <span>Configure <code>SMB_SERVER</code> to connect your install share.</span>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <span class="mono">{{ title }} // {{ team }} // internal use only</span>
+  </footer>
+
+  <!-- ══ VERSION MODAL ══════════════════════════════════════ -->
+  <div class="modal-overlay" id="modal-overlay" onclick="closeModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-area">
+          <img id="modal-icon" src="" alt="" onerror="this.src='/static/icons/_placeholder.svg'"/>
+          <div>
+            <div class="modal-app-name" id="modal-app-name"></div>
+            <div class="modal-sub">Select a version to download</div>
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <ul class="version-list" id="version-list"></ul>
+    </div>
+  </div>
+
+  <!-- ══ Theme toggle ════════════════════════════════════════ -->
+  <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Switch theme">
+    <span id="theme-icon">&#127800;</span>
+    <span id="theme-label">Pink</span>
+  </button>
+  <script>
+    const APPS  = {{ apps | tojson }};
+    const SITES = {{ sites | tojson }};
+  </script>
+  <script src="{{ url_for('static', filename='js/portal.js') }}"></script>
+
+</body>
+</html>

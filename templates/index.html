@@ -31,7 +31,7 @@
         id="search-input"
         class="search-input"
         type="text"
-        placeholder="Search apps and websites..."
+        placeholder="Search apps, websites and scripts"
         autocomplete="off"
         oninput="handleSearch(this.value)"
       />
@@ -54,7 +54,6 @@
         </div>
       </div>
 
-      <!-- outer scrolls horizontally; two inner rows stack vertically -->
       <div class="cards-scroll-outer" id="webapps-outer">
         <div class="two-row-wrap">
 
@@ -164,6 +163,79 @@
       </div>
     </section>
 
+    <!-- ══ SCRIPTS — one row per team ════════════════════ -->
+    <div class="scripts-section-wrap" id="section-scripts">
+      <div class="section-header">
+        <h2 class="section-title">Scripts</h2>
+        {% if not gitlab_configured %}
+        <span class="badge-warn">GitLab not configured</span>
+        {% endif %}
+      </div>
+
+      {% if teams %}
+        {% for team_name in teams %}
+        <section class="portal-section script-team-section" id="section-team-{{ team_name }}">
+          <div class="section-header">
+            <h3 class="section-title">{{ team_name }}</h3>
+            <span class="section-count">{{ scripts_by_team.get(team_name, []) | length }}</span>
+            <div class="scroll-hint">
+              <button class="scroll-btn" onclick="scrollOuter('scripts-outer-{{ team_name }}', -1)">‹</button>
+              <button class="scroll-btn" onclick="scrollOuter('scripts-outer-{{ team_name }}', 1)">›</button>
+            </div>
+          </div>
+
+          <div class="cards-scroll-outer" id="scripts-outer-{{ team_name }}">
+            {% set team_scripts = scripts_by_team.get(team_name, []) %}
+            {% if team_scripts %}
+            <div class="cards-row">
+              {% for script in team_scripts %}
+              <button class="script-card"
+                      onclick="openScriptModal('{{ team_name }}', '{{ script.folder_name }}')"
+                      data-name="{{ script.name | lower }}"
+                      data-desc="{{ script.description | lower }}"
+                      data-team="{{ team_name }}">
+                <div class="card-img-wrap">
+                  <img src="/api/scripts/{{ team_name }}/{{ script.folder_name }}/logo"
+                       alt="{{ script.name }}"
+                       onerror="this.src='/static/icons/_placeholder.svg'"/>
+                </div>
+                <div class="card-label">
+                  <span class="card-name">{{ script.name }}</span>
+                  <span class="card-meta">{{ script.description[:50] }}{% if script.description | length > 50 %}…{% endif %}</span>
+                  <div class="script-badges">
+                    <span class="lang-badge lang-{{ script.language }}">{{ script.language }}</span>
+                    {% if script.approval_required %}
+                    <span class="approval-badge">approval</span>
+                    {% endif %}
+                  </div>
+                </div>
+              </button>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+              <span>No scripts yet for <strong>{{ team_name }}</strong></span>
+            </div>
+            {% endif %}
+          </div>
+        </section>
+        {% endfor %}
+      {% else %}
+      <div class="empty-state" style="min-width:100%;margin-top:1rem;">
+        <span>Configure <code>TEAMS</code> in eden-config to enable scripts</span>
+      </div>
+      {% endif %}
+
+      <!-- Upload button at very bottom -->
+      {% if gitlab_configured %}
+      <div class="upload-btn-wrap">
+        <button class="upload-script-btn" onclick="openUploadModal()">
+          <span>+</span> Upload New Script
+        </button>
+      </div>
+      {% endif %}
+    </div>
+
   </main>
 
   <footer>
@@ -187,14 +259,162 @@
     </div>
   </div>
 
+  <!-- ══ SCRIPT RUN MODAL ═══════════════════════════════════ -->
+  <div class="modal-overlay" id="script-modal-overlay" onclick="closeScriptModal()">
+    <div class="modal modal-wide" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-area">
+          <img id="script-modal-icon" src="" alt="" onerror="this.src='/static/icons/_placeholder.svg'"/>
+          <div>
+            <div class="modal-app-name" id="script-modal-name"></div>
+            <div class="modal-sub" id="script-modal-desc"></div>
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeScriptModal()">✕</button>
+      </div>
+      <div class="script-modal-body" id="script-modal-body"></div>
+      <div class="modal-footer">
+        <div class="modal-error" id="script-modal-error"></div>
+        <button class="modal-close" onclick="closeScriptModal()">Cancel</button>
+        <button class="submit-btn" id="script-submit-btn" onclick="submitScript()">Run Script</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ UPLOAD MODAL ═══════════════════════════════════════ -->
+  <div class="modal-overlay" id="upload-modal-overlay" onclick="closeUploadModal()">
+    <div class="modal modal-wide" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-area">
+          <div>
+            <div class="modal-app-name">Upload New Script</div>
+            <div class="modal-sub">Creates a GitLab MR for team approval</div>
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeUploadModal()">✕</button>
+      </div>
+      <div class="upload-modal-body">
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Script Name <span class="required">*</span></label>
+            <input class="form-input" id="u-name" type="text" placeholder="my-script"
+                   oninput="validateUploadField('u-name')"/>
+            <div class="field-hint">Lowercase letters, numbers and hyphens only. e.g. <code>rotate-secret</code></div>
+            <div class="field-error" id="u-name-err"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Team <span class="required">*</span></label>
+            <select class="form-input" id="u-team" onchange="validateUploadField('u-team')">
+              <option value="">Select team...</option>
+              {% for t in teams %}
+              <option value="{{ t }}">{{ t }}</option>
+              {% endfor %}
+            </select>
+            <div class="field-error" id="u-team-err"></div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Language <span class="required">*</span></label>
+            <select class="form-input" id="u-language" onchange="validateUploadField('u-language')">
+              <option value="">Select language...</option>
+              <option value="python">Python</option>
+              <option value="bash">Bash</option>
+              <option value="powershell">PowerShell</option>
+            </select>
+            <div class="field-error" id="u-language-err"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Namespace override <span class="optional">(optional)</span></label>
+            <input class="form-input" id="u-namespace" type="text" placeholder="defaults to team name"/>
+            <div class="field-hint">Argo namespace = this value + -workflows</div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Description <span class="required">*</span></label>
+          <input class="form-input" id="u-description" type="text" placeholder="What does this script do?"
+                 maxlength="200" oninput="validateUploadField('u-description')"/>
+          <div class="field-error" id="u-description-err"></div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Script File <span class="required">*</span></label>
+            <input class="form-input" id="u-script-file" type="file"
+                   accept=".py,.sh,.ps1" onchange="validateUploadField('u-script-file')"/>
+            <div class="field-hint" id="u-script-file-hint">Select a .py, .sh or .ps1 file</div>
+            <div class="field-error" id="u-script-file-err"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Logo <span class="optional">(optional)</span></label>
+            <input class="form-input" id="u-logo" type="file" accept=".png"
+                   onchange="validateUploadField('u-logo')"/>
+            <div class="field-hint">PNG only, max 2MB</div>
+            <div class="field-error" id="u-logo-err"></div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Dependencies <span class="optional">(optional)</span></label>
+            <input class="form-input" id="u-deps" type="text" placeholder="kubernetes, hvac, requests"/>
+            <div class="field-hint">Comma-separated package names</div>
+            <div class="field-error" id="u-deps-err"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Approval Required</label>
+            <div class="toggle-wrap">
+              <label class="toggle-switch">
+                <input type="checkbox" id="u-approval" checked/>
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="toggle-label" id="u-approval-label">Yes</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">CPU <span class="optional">(optional)</span></label>
+            <input class="form-input" id="u-cpu" type="text" placeholder="200m" value="200m"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Memory <span class="optional">(optional)</span></label>
+            <input class="form-input" id="u-memory" type="text" placeholder="256Mi" value="256Mi"/>
+          </div>
+        </div>
+
+        <!-- Args builder -->
+        <div class="form-group">
+          <label class="form-label">Arguments <span class="optional">(optional)</span></label>
+          <div id="args-builder"></div>
+          <button type="button" class="add-arg-btn" onclick="addArgRow()">+ Add Argument</button>
+          <div class="field-error" id="u-args-err"></div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <div class="modal-error" id="upload-modal-error"></div>
+        <button class="modal-close" onclick="closeUploadModal()">Cancel</button>
+        <button class="submit-btn" id="upload-submit-btn" onclick="submitUpload()">Create MR</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ══ Theme toggle ════════════════════════════════════════ -->
   <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Switch theme">
     <span id="theme-icon">&#127800;</span>
     <span id="theme-label">Light</span>
   </button>
+
   <script>
-    const APPS  = {{ apps | tojson }};
-    const SITES = {{ sites | tojson }};
+    const APPS            = {{ apps | tojson }};
+    const SITES           = {{ sites | tojson }};
+    const TEAMS           = {{ teams | tojson }};
+    const SCRIPTS_BY_TEAM = {{ scripts_by_team | tojson }};
   </script>
   <script src="{{ url_for('static', filename='js/portal.js') }}"></script>
 

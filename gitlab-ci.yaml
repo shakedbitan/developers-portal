@@ -1,0 +1,26 @@
+#this is on eden-scripts-repo!
+
+# if 2 sites: we need 2 tokens and another job. create in repo EDEN_RELOAD_TOKEN, EDEN_URL
+.tags:: &tags
+  tags: [docker-runner]
+
+.reload-scripts: &reload-scripts
+  <<: *tags
+  script:
+    - echo "Notifying Eden to reload scripts..."
+    - curl -s -o /dev/null -w "%{http_code}" \
+     -X POST "${EDEN_URL}/api/scripts/reload" \
+     -H "X-Reload-Token: ${EDEN_RELOAD_TOKEN}" \
+     -H "Content-Type: application/json"
+
+stages:
+  - deploy
+
+
+notify-eden-reload:
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"   
+  <<: *reload-scripts
+  environment:
+    name: production

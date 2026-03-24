@@ -8,9 +8,9 @@ Internal developer portal built by Team Genesys. Eden runs on Kubernetes and giv
 
 **Web Apps** — Quick-access cards linking to internal websites. Two scrollable rows with favicon icons. Configured via eden-sites configmap (in the Tashtit)
 
-**App Downloads** — Browse and download applications (.exe, .msi, .msix, .zip) directly from a CIFS/SMB network share. Cards are auto-discovered from the share directory structure. Version picker lets you choose between multiple versions of each app.
+**App Downloads** — Browse and download applications .Version picker lets you choose between multiple versions of each app.
 
-**Scripts** — Run team scripts (Python, Bash, PowerShell) via Argo Workflows directly from the UI. Each team gets its own scrollable row. Scripts are stored in a GitLab repository and loaded automatically. Fill in arguments through a form that enforces types, required fields, min/max rules and units. Upload new scripts through the UI — Eden opens a GitLab MR for team approval.
+**Scripts** — Run team scripts (Python, Bash, PowerShell) via Argo Workflows directly from the UI. Each team provides its own scrollable row. Scripts are stored in a GitLab repository and loaded automatically. Fill in arguments through a form that enforces types, required fields, min/max rules and units. Upload new scripts through the UI — Eden opens a GitLab MR for team approval.
 
 **Search** — Global search across web apps, install apps and scripts. Results appear instantly as you type.
 
@@ -27,7 +27,7 @@ Eden (k8s Pod — eden-namespace)
   ├── reads config from          k8s ConfigMap (eden-config)
   ├── reads secrets from         k8s Secret   (eden-secrets)
   │
-  ├── scans installers from      CIFS/SMB share  (smbprotocol — no OS mount needed)
+  ├── scans installers from      CIFS/SMB share  (smbprotocol — no OS mount needed)   # update this
   ├── fetches scripts from       GitLab API      (eden-scripts repo)
   └── submits workflows to       Argo Workflows API
 ```
@@ -85,39 +85,6 @@ eden-scripts/
             └── logo.png          ← optional, shown as card image
 ```
 
-### script.yaml format
-
-```yaml
-name: rotate-secret
-namespace: db                  # Argo namespace = this + "-workflows" → db-workflows
-language: python               # python | bash | powershell
-description: Rotate a Kubernetes secret value and update dependent pods
-
-approval:
-  required: true               # if true, workflow pauses for approval in Argo UI
-
-resources:
-  cpu: 200m
-  memory: 256Mi
-
-dependencies:
-  - kubernetes
-  - hvac
-
-args:
-  - name: secret-name          # kebab-case
-    type: string               # string | integer | boolean
-    required: true
-    description: Name of the secret to rotate
-
-  - name: ttl
-    type: integer
-    required: false
-    min: 1
-    max: 365
-    unit: days
-    description: How long the new secret should be valid
-```
 
 Supported arg types:
 
@@ -126,69 +93,6 @@ Supported arg types:
 | `string` | Text input | No |
 | `integer` | Number input | Yes |
 | `boolean` | Toggle switch | No |
-
----
-
-## Kubernetes Setup
-
-### 1. Apply ConfigMaps and Secrets
-
-```bash
-# Edit these files with your actual values first
-kubectl apply -f k8s/configmap-eden.yaml
-kubectl apply -f k8s/configmap-sites.yaml
-kubectl apply -f k8s/secret-eden.yaml
-```
-
-### 2. Deploy Eden
-
-```bash
-kubectl apply -f k8s/deployment.yaml
-```
-
-### 3. Verify
-
-```bash
-kubectl get pods -n eden-namespace
-kubectl logs -n eden-namespace -l app=eden -f
-```
-
----
-
-## Configuration Reference
-
-All configuration is injected via the `eden-config` ConfigMap and `eden-secrets` Secret as environment variables.
-
-### eden-config (ConfigMap)
-
-| Variable | Example | Description |
-|---|---|---|
-| `PORTAL_TITLE` | `Eden` | Page title shown in the header |
-| `TEAM_NAME` | `Platform Engineering` | Subtitle shown under the title |
-| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, or `ERROR` |
-| `TEAMS` | `db,backend,infra` | Comma-separated team names. One script row per team. |
-| `GITLAB_URL` | `https://git` | Your GitLab base URL |
-| `GITLAB_REPO_PATH` | `my-group/eden-scripts` | Full path to the scripts repo |
-| `GITLAB_DEFAULT_BRANCH` | `main` | Branch to read scripts from and open MRs against |
-| `ARGO_URL` | `https://argoworkflow.example` | Argo Workflows base URL |
-| `SMB_SERVER` | `fileserver.corp` | CIFS/SMB server hostname. Leave empty to disable installs. |
-| `SMB_SHARE` | `installs` | Share name |
-| `SMB_BASE_PATH` | _(empty)_ | Optional sub-folder inside the share |
-| `SMB_DOMAIN` | `CORP` | Windows domain (optional) |
-| `SMB_CACHE_TTL` | `60` | Seconds to cache the SMB directory listing |
-| `SITES_FILE` | `/config/sites.json` | Path to the web app links file (ConfigMap mount) |
-| `SCRIPTS_BASE_PATH` | `scripts` | Folder inside eden-scripts repo that contains team folders |
-
-### eden-secrets (Secret)
-
-| Variable | Description |
-|---|---|
-| `GITLAB_TOKEN` | GitLab personal access token (needs `api` + `read_repository` + `write_repository`) |
-| `ARGO_TOKEN` | Argo Workflows bearer token |
-| `SMB_USER` | SMB service account username |
-| `SMB_PASSWORD` | SMB service account password |
-| `RELOAD_TOKEN` | Shared secret for the `/api/scripts/reload` webhook. Generate with `openssl rand -hex 32` |
-| `ARTIFACTORY_TOKEN` | Example — add any additional tokens your scripts need here |
 
 ---
 
@@ -212,7 +116,7 @@ If no image is found, Eden fetches the site's `/favicon.ico` automatically (prox
 
 ---
 
-## App Downloads (SMB)
+<!-- ## App Downloads (SMB)
 
 Eden connects directly to your CIFS/SMB share using `smbprotocol` — no OS-level mount is required in the pod. The share is scanned at startup and cached for `SMB_CACHE_TTL` seconds.
 
@@ -241,7 +145,7 @@ Priority order for install app card icons:
 2. Auto-extracted from the installer file using `icoextract` + `Pillow`
 3. `static/icons/_placeholder.svg` — generic fallback
 
----
+--- -->
 
 ## Scripts
 
@@ -269,59 +173,21 @@ After the MR is merged, GitLab CI calls Eden's reload webhook and the script app
 
 ```bash
 # 1. Create the folder structure
-mkdir -p scripts/db/rotate-secret
+mkdir -p scripts/team/rotate-secret
 
 # 2. Add your script file
-cp my_script.py scripts/db/rotate-secret/script.py
+cp my_script.py scripts/team/rotate-secret/script.py
 
 # 3. Add script.yaml (see format above)
 
 # 4. Optionally add a logo
-cp logo.png scripts/db/rotate-secret/logo.png
+cp logo.png scripts/team/rotate-secret/logo.png
 
 # 5. Commit, push and open an MR
-git add scripts/db/rotate-secret/
+git add scripts/team/rotate-secret/
 git commit -m "feat: add rotate-secret script"
 git push origin feat/add-rotate-secret
 ```
-
-### Secrets in scripts
-
-Secrets from `eden-secrets` are mounted into workflow pods at `/etc/eden-secrets/` — one file per key. Scripts read them like this:
-
-**Python:**
-```python
-def get_secret(name):
-    try:
-        with open(f"/etc/eden-secrets/{name}") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        import os
-        return os.getenv(name)  # fallback for local dev
-
-token = get_secret("ARTIFACTORY_TOKEN")
-```
-
-**Bash:**
-```bash
-get_secret() {
-  local path="/etc/eden-secrets/$1"
-  [ -f "$path" ] && cat "$path" || echo "${!1}"
-}
-TOKEN=$(get_secret "ARTIFACTORY_TOKEN")
-```
-
-**PowerShell:**
-```powershell
-function Get-Secret($name) {
-    $path = "/etc/eden-secrets/$name"
-    if (Test-Path $path) { return (Get-Content $path -Raw).Trim() }
-    return $env:$name
-}
-$token = Get-Secret "ARTIFACTORY_TOKEN"
-```
-
-The volume mount is defined in your ClusterWorkflowTemplate — Eden does not need to manage it.
 
 ### Reload webhook
 
@@ -331,8 +197,6 @@ When an MR is merged in `eden-scripts`, GitLab CI calls:
 POST /api/scripts/reload
 X-Reload-Token: <your RELOAD_TOKEN value>
 ```
-
-Eden reloads all scripts in the background. Add the snippet from `k8s/gitlab-ci-webhook.yml` to your `eden-scripts` repo's `.gitlab-ci.yml` and set `EDEN_URL` and `EDEN_RELOAD_TOKEN` as masked CI/CD variables in the GitLab project settings.
 
 ---
 
@@ -384,5 +248,10 @@ Set `LOG_LEVEL=DEBUG` in `eden-config` for full request and response logging. To
 | Script storage | GitLab | Source of truth for all scripts |
 
 ---
+
+## WorkflowTemplates
+
+all Cluster workflowTemplates can be found here: https://git
+an argocd application monitors changes in them. generally they are not supposed to be changed.
 
 *Eden — Created by Team Genesys*

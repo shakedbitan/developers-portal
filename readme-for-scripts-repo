@@ -73,3 +73,38 @@ eden-scripts/
             ├── script.yaml       ← metadata, eden generates  this file by itself
             └── logo.png          ← optional, shown as card image, if not provided it is 
 
+### script.yaml format
+
+```yaml
+name: rotate-secret
+namespace: db                  # Argo namespace = this + "-workflows" → db-workflows
+language: python               # python | bash | powershell
+description: Rotate a Kubernetes secret value and update dependent pods
+
+approval:
+  required: true               # if true, workflow pauses for approval in Argo UI
+
+resources:
+  cpu: 200m
+  memory: 256Mi
+
+dependencies:
+  - kubernetes
+  - hvac
+
+args:
+  - name: secret-name          # kebab-case
+    type: string               # string | integer | boolean
+    required: true
+    description: Name of the secret to rotate
+
+  - name: ttl
+    type: integer
+    required: false
+    min: 1
+    max: 365
+    unit: days
+    description: How long the new secret should be valid
+```
+
+when a commit to the repo is made, a pipeline script runs to update eden's scripts available.

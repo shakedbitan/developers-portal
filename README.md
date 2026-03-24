@@ -58,15 +58,15 @@ eden/
 │   ├── js/portal.js        All frontend JS — scroll, search, modals, validation
 │   ├── icons/
 │   │   ├── _placeholder.svg          Generic fallback icon
-│   │   └── _logoplaceholder.png      ← You must add this (script card fallback)
-│   └── site-images/                  Drop <sitename>.png here for web app cards
+│   │   └── _logoplaceholder.png      Generic fallback logo icon
+│   └── site-images/                  Drop <sitename>.png here for web app cards's pics
 │
 └── k8s/
     ├── configmap-eden.yaml       Main configuration
-    ├── configmap-sites.yaml      Web app links (mounted as /config/sites.json)
+    ├── configmap-sites.yaml      Web app links (mounted as /config/sites.json to the pod)
     ├── secret-eden.yaml          All secrets template
     ├── deployment.yaml           Deployment + Service + Ingress
-    └── gitlab-ci-webhook.yml     GitLab CI snippet for reload webhook
+    └── gitlab-ci-webhook.yml     GitLab CI snippet for reload webhook (saved in the eden-scripts git repository)
 ```
 
 ---
@@ -156,8 +156,9 @@ Priority order for install app card icons:
 3. Developer clicks a script card → form appears with the script's defined arguments
 4. Developer fills in the form → Eden validates all inputs
 5. Eden submits a workflow to Argo Workflows API in the team's namespace (`<team>-workflows`)
-6. If `approval.required: true`, the workflow pauses at a suspend step — a team lead approves it in the Argo Workflows UI
-7. The script runs in a pod cloned from the GitLab repo
+6. If `approval.required: true`, the workflow pauses at a suspend step — a team member approves it in the Argo Workflows UI, according to his team's premissions. 
+    each team has its own service account, hence they can approve only their team's scripts. 
+7. The script runs in a pod cloned from the GitLab repo, using the ClusterWorkflowTemplate
 
 ### Adding a new script via the UI
 
@@ -253,5 +254,10 @@ Set `LOG_LEVEL=DEBUG` in `eden-config` for full request and response logging. To
 
 all Cluster workflowTemplates can be found here: https://git
 an argocd application monitors changes in them. generally they are not supposed to be changed.
+
+## manually creation:
+- argoworkflowtemplates application
+- clusterworkflow.yaml + service accounts for each team
+- eden application deployment, eden-secrets(secret), eden-sites(cm), eden-config(cm)
 
 *Eden — Created by Team Genesys*

@@ -37,7 +37,7 @@ def _optional(key: str, default: str = "") -> str:
 
 # ── Portal identity ───────────────────────────────────────────────────────────
 PORTAL_TITLE  = _optional("PORTAL_TITLE",  "Eden")
-TEAM_NAME     = _optional("TEAM_NAME",     "Platform Engineering")
+TEAM_NAME     = _optional("TEAM_NAME",     "Welcome to")
 LOG_LEVEL     = _optional("LOG_LEVEL",     "INFO")
 PORT          = int(_optional("PORT",      "5000"))
 

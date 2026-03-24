@@ -1,5 +1,9 @@
-# how to add new scripts?
-eden's scripts repository- supports python, bash and powershell
+### eden's scripts repository- supports python, bash and powershell
+
+## How to approve a script
+go to https://workflows/
+workflows --> right click on the workflow --> approve
+
 
 ## How to use parameters in your script?
 
@@ -62,7 +66,7 @@ $userName = Get-Param "userName"
 
 ```
 
-## explanation
+### explanation
 This project is built like this:
 
 eden-scripts/
@@ -73,7 +77,7 @@ eden-scripts/
             ├── script.yaml       ← metadata, eden generates  this file by itself
             └── logo.png          ← optional, shown as card image, if not provided it is 
 
-### script.yaml format
+## script.yaml format
 
 ```yaml
 name: rotate-secret

@@ -1,100 +1,225 @@
-# Dev Portal
+# Eden — Developer Portal
 
-Internal developer portal with two sections:
-- **Web Apps** — horizontal card strip linking to internal websites (favicon as icon)
-- **App Downloads** — horizontal card strip pulling from a CIFS/SMB installs share (auto-extracted or manual icons, version picker modal, direct download)
+Internal developer portal built by Team Genesys. Eden runs on Kubernetes and gives developers a single place to access internal web apps, download tools, and run team scripts via Argo Workflows.
 
 ---
 
-## Tech Stack
+## Features
 
-| Layer | Technology | Why |
-|---|---|---|
-| Backend | **Python / Flask** | Simple, you know it, easy to extend |
-| SMB access | **smbprotocol** | Pure-Python SMB2/3 client — no OS mount needed in the pod |
-| Icon extraction | **icoextract + Pillow** | Pulls `.ico` resources out of `.exe`/`.msi` files |
-| Favicon service | **Google S2 Favicons** (proxied) | Zero-effort icons for web app cards |
-| Templates | **Jinja2** (bundled with Flask) | Server-side HTML rendering |
-| Frontend | Vanilla HTML + CSS + JS | No framework, no build step |
-| Production server | **Gunicorn** | Multi-worker WSGI server |
+**Web Apps** — Quick-access cards linking to internal websites. Two scrollable rows with favicon icons. Configured via eden-sites configmap (in the Tashtit)
+
+**App Downloads** — Browse and download applications (.exe, .msi, .msix, .zip) directly from a CIFS/SMB network share. Cards are auto-discovered from the share directory structure. Version picker lets you choose between multiple versions of each app.
+
+**Scripts** — Run team scripts (Python, Bash, PowerShell) via Argo Workflows directly from the UI. Each team gets its own scrollable row. Scripts are stored in a GitLab repository and loaded automatically. Fill in arguments through a form that enforces types, required fields, min/max rules and units. Upload new scripts through the UI — Eden opens a GitLab MR for team approval.
+
+**Search** — Global search across web apps, install apps and scripts. Results appear instantly as you type.
+
+**Light / Dark mode** — Toggle between dark (default) and light theme. Preference is saved in the browser.
 
 ---
 
-## File Structure
+## Architecture
 
 ```
-devportal/
-├── app.py               # Flask routes: /, /api/apps, /download/<path>, /favicon/<domain>
-├── smb_scanner.py       # SMB directory walker + file streamer (with TTL cache)
-├── icon_resolver.py     # Icon priority: manual PNG → extracted cache → placeholder
-├── sites.json           # Web app links config
+Eden (k8s Pod — eden-namespace)
+  │
+  ├── reads web app links from   k8s ConfigMap (eden-sites)
+  ├── reads config from          k8s ConfigMap (eden-config)
+  ├── reads secrets from         k8s Secret   (eden-secrets)
+  │
+  ├── scans installers from      CIFS/SMB share  (smbprotocol — no OS mount needed)
+  ├── fetches scripts from       GitLab API      (eden-scripts repo)
+  └── submits workflows to       Argo Workflows API
+```
+
+Scripts live in the `eden-scripts` GitLab repo. After an MR is merged, GitLab CI calls Eden's reload webhook and the new script appears in the UI within seconds — no pod restart required.
+
+---
+
+## Repository Structure
+
+```
+eden/
+├── app.py                  Flask application — all routes
+├── config.py               Environment variable reading (single source of truth)
+├── gitlab_client.py        GitLab API — fetch scripts, create branches, open MRs
+├── argo_client.py          Argo Workflows API — submit workflows
+├── script_store.py         In-memory script cache with background reload
+├── smb_scanner.py          SMB share directory scanner and file streamer
+├── icon_resolver.py        App icon extraction from .exe/.msi files
 ├── requirements.txt
 ├── Dockerfile
-├── .env.example
+│
+├── templates/
+│   └── index.html          Main page (Jinja2 template)
 │
 ├── static/
-│   ├── css/style.css    # All styles (dark mode, horizontal rows, modal)
-│   ├── js/portal.js     # Scroll buttons, drag-scroll, modal, 60s data refresh
-│   └── icons/
-│       ├── _placeholder.svg     # Fallback icon
-│       ├── _cache/              # Auto-extracted icons (written at runtime)
-│       ├── vscode.png           # ← manual icon overrides go here
-│       └── git.png              #   filename = app folder name (lowercase)
+│   ├── css/style.css       All styles — dark/light themes, cards, modals, forms
+│   ├── js/portal.js        All frontend JS — scroll, search, modals, validation
+│   ├── icons/
+│   │   ├── _placeholder.svg          Generic fallback icon
+│   │   └── _logoplaceholder.png      ← You must add this (script card fallback)
+│   └── site-images/                  Drop <sitename>.png here for web app cards
 │
-└── templates/
-    └── index.html       # Main page template
+└── k8s/
+    ├── configmap-eden.yaml       Main configuration
+    ├── configmap-sites.yaml      Web app links (mounted as /config/sites.json)
+    ├── secret-eden.yaml          All secrets template
+    ├── deployment.yaml           Deployment + Service + Ingress
+    └── gitlab-ci-webhook.yml     GitLab CI snippet for reload webhook
 ```
 
 ---
 
-## Local Development
+## Eden Scripts Repository Structure
+
+Scripts live in a separate GitLab repo (`eden-scripts`). The structure must follow this convention:
+
+```
+eden-scripts/
+└── scripts/
+    └── <team-name>/
+        └── <script-name>/        ← folder name must be kebab-case (e.g. rotate-secret)
+            ├── script.py         ← or script.sh / script.ps1
+            ├── script.yaml       ← metadata (see format below)
+            └── logo.png          ← optional, shown as card image
+```
+
+### script.yaml format
+
+```yaml
+name: rotate-secret
+namespace: db                  # Argo namespace = this + "-workflows" → db-workflows
+language: python               # python | bash | powershell
+description: Rotate a Kubernetes secret value and update dependent pods
+
+approval:
+  required: true               # if true, workflow pauses for approval in Argo UI
+
+resources:
+  cpu: 200m
+  memory: 256Mi
+
+dependencies:
+  - kubernetes
+  - hvac
+
+args:
+  - name: secret-name          # kebab-case
+    type: string               # string | integer | boolean
+    required: true
+    description: Name of the secret to rotate
+
+  - name: ttl
+    type: integer
+    required: false
+    min: 1
+    max: 365
+    unit: days
+    description: How long the new secret should be valid
+```
+
+Supported arg types:
+
+| Type | UI control | Supports min/max |
+|---|---|---|
+| `string` | Text input | No |
+| `integer` | Number input | Yes |
+| `boolean` | Toggle switch | No |
+
+---
+
+## Kubernetes Setup
+
+### 1. Apply ConfigMaps and Secrets
 
 ```bash
-pip install -r requirements.txt
-cp .env.example .env      # edit SMB values
-python app.py
-# → http://localhost:5000
+# Edit these files with your actual values first
+kubectl apply -f k8s/configmap-eden.yaml
+kubectl apply -f k8s/configmap-sites.yaml
+kubectl apply -f k8s/secret-eden.yaml
 ```
 
-For local dev **without** an SMB share, just leave `SMB_SERVER` empty — the App Downloads section will show a "not configured" message and the rest of the portal works normally.
+### 2. Deploy Eden
+
+```bash
+kubectl apply -f k8s/deployment.yaml
+```
+
+### 3. Verify
+
+```bash
+kubectl get pods -n eden-namespace
+kubectl logs -n eden-namespace -l app=eden -f
+```
 
 ---
 
-## Adding Web App Links
+## Configuration Reference
 
-Edit `sites.json`:
+All configuration is injected via the `eden-config` ConfigMap and `eden-secrets` Secret as environment variables.
 
-```json
-[
-  { "name": "Grafana", "url": "http://grafana.internal" },
-  { "name": "My New Tool", "url": "http://newtool.internal" }
-]
-```
+### eden-config (ConfigMap)
 
-Favicon is fetched automatically from Google's service (proxied through the portal server so clients never leave the internal network). Rebuild & redeploy, or use a ConfigMap (see k8s section below).
+| Variable | Example | Description |
+|---|---|---|
+| `PORTAL_TITLE` | `Eden` | Page title shown in the header |
+| `TEAM_NAME` | `Platform Engineering` | Subtitle shown under the title |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, or `ERROR` |
+| `TEAMS` | `db,backend,infra` | Comma-separated team names. One script row per team. |
+| `GITLAB_URL` | `https://git` | Your GitLab base URL |
+| `GITLAB_REPO_PATH` | `my-group/eden-scripts` | Full path to the scripts repo |
+| `GITLAB_DEFAULT_BRANCH` | `main` | Branch to read scripts from and open MRs against |
+| `ARGO_URL` | `https://argoworkflow.example` | Argo Workflows base URL |
+| `SMB_SERVER` | `fileserver.corp` | CIFS/SMB server hostname. Leave empty to disable installs. |
+| `SMB_SHARE` | `installs` | Share name |
+| `SMB_BASE_PATH` | _(empty)_ | Optional sub-folder inside the share |
+| `SMB_DOMAIN` | `CORP` | Windows domain (optional) |
+| `SMB_CACHE_TTL` | `60` | Seconds to cache the SMB directory listing |
+| `SITES_FILE` | `/config/sites.json` | Path to the web app links file (ConfigMap mount) |
+| `SCRIPTS_BASE_PATH` | `scripts` | Folder inside eden-scripts repo that contains team folders |
+
+### eden-secrets (Secret)
+
+| Variable | Description |
+|---|---|
+| `GITLAB_TOKEN` | GitLab personal access token (needs `api` + `read_repository` + `write_repository`) |
+| `ARGO_TOKEN` | Argo Workflows bearer token |
+| `SMB_USER` | SMB service account username |
+| `SMB_PASSWORD` | SMB service account password |
+| `RELOAD_TOKEN` | Shared secret for the `/api/scripts/reload` webhook. Generate with `openssl rand -hex 32` |
+| `ARTIFACTORY_TOKEN` | Example — add any additional tokens your scripts need here |
 
 ---
 
-## App Icons (Installs)
+## Web App Links
 
-Priority order:
+Web app links are stored in the `eden-sites` ConfigMap as a JSON file mounted at `/config/sites.json`. You can update links without rebuilding the image 
 
-1. **Manual PNG** — drop a file named `static/icons/<appname>.png` into the repo.
-   `appname` = the folder name on the SMB share, lowercase. E.g. `static/icons/vscode.png`
-2. **Auto-extracted** — on first access, the portal downloads the first installer for the app,
-   runs `icoextract` on it, converts to PNG and caches at `static/icons/_cache/<appname>.png`.
-   This cache lives inside the container — it rebuilds on pod restart.
-3. **Placeholder** — generic icon shown while extraction is pending or if extraction fails.
 
-> **Tip:** Manual PNGs always win. If auto-extraction produces a bad result, just drop a clean
-> 256×256 PNG in `static/icons/` and it will be used immediately.
+### Adding card images for web apps
+
+Drop a PNG file named after the site into `static/site-images/`. The filename is the site name lowercased with spaces replaced by underscores:
+
+```
+static/site-images/
+  grafana.png
+  harbor_registry.png
+  argocd.png
+```
+
+If no image is found, Eden fetches the site's `/favicon.ico` automatically (proxied through the pod — no browser traffic leaves the cluster). The favicon is cached locally so it only fetches once.
 
 ---
 
-## SMB Share Layout
+## App Downloads (SMB)
+
+Eden connects directly to your CIFS/SMB share using `smbprotocol` — no OS-level mount is required in the pod. The share is scanned at startup and cached for `SMB_CACHE_TTL` seconds.
+
+Expected share layout:
 
 ```
-\\SERVER\installs\
+\\server\installs\
   vscode\
     VSCodeSetup-1.85.0.exe
     VSCodeSetup-1.86.0.exe
@@ -102,126 +227,162 @@ Priority order:
     Git-2.43-64-bit.exe
   nodejs\
     node-v20.11.0-x64.msi
-  slack\
-    SlackSetup-4.36.134.exe
 ```
 
-- One **folder per application** — the folder name becomes the card title (title-cased)
-- Drop any number of installer files inside — they all appear as versions
-- Supported extensions: `.exe` `.msi` `.msix` `.appx` `.zip` `.7z`
-- **Adding a new app**: create the folder, drop the file in. The portal picks it up within
-  `SMB_CACHE_TTL` seconds (default 60s) — **no restart or redeploy needed**
+One folder per application. Multiple installer files inside = multiple versions in the version picker. Supported extensions: `.exe` `.msi` `.msix` `.appx` `.zip` `.7z`
+
+Adding a new app: create the folder and drop the file in. Eden picks it up within `SMB_CACHE_TTL` seconds — no restart needed.
+
+### App icons
+
+Priority order for install app card icons:
+
+1. `static/icons/<appname>.png` — manual override in the repo (always wins)
+2. Auto-extracted from the installer file using `icoextract` + `Pillow`
+3. `static/icons/_placeholder.svg` — generic fallback
 
 ---
 
-## Environment Variables
+## Scripts
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORTAL_TITLE` | `Dev Portal` | Page title |
-| `TEAM_NAME` | `Engineering` | Team name in header |
-| `SITES_FILE` | `sites.json` | Path to web links config |
-| `PORT` | `5000` | Listening port |
-| `DEBUG` | `false` | Flask debug mode |
-| `SMB_SERVER` | _(empty)_ | FQDN or IP of the file server |
-| `SMB_SHARE` | `installs` | Share name |
-| `SMB_BASE_PATH` | _(empty)_ | Optional sub-folder inside the share |
-| `SMB_USER` | _(empty)_ | Service account username |
-| `SMB_PASSWORD` | _(empty)_ | Service account password |
-| `SMB_DOMAIN` | _(empty)_ | Windows domain (optional) |
-| `SMB_CACHE_TTL` | `60` | Seconds to cache the directory listing |
+### How it works
 
----
+1. Eden fetches all `script.yaml` files from the `eden-scripts` GitLab repo at startup
+2. Scripts are grouped by team and displayed as scrollable card rows
+3. Developer clicks a script card → form appears with the script's defined arguments
+4. Developer fills in the form → Eden validates all inputs
+5. Eden submits a workflow to Argo Workflows API in the team's namespace (`<team>-workflows`)
+6. If `approval.required: true`, the workflow pauses at a suspend step — a team lead approves it in the Argo Workflows UI
+7. The script runs in a pod cloned from the GitLab repo
 
-## Docker
+### Adding a new script via the UI
+
+Click **Upload New Script** at the bottom of the page. Fill in the form — Eden will:
+- Validate all inputs (script name must be `kebab-case`, file extension must match language, etc.)
+- Create a new branch in `eden-scripts`
+- Push `script.yaml`, the script file, and optionally `logo.png`
+- Open a GitLab MR for your team to review
+
+After the MR is merged, GitLab CI calls Eden's reload webhook and the script appears in the UI automatically.
+
+### Adding a new script manually
 
 ```bash
-docker build -t devportal .
+# 1. Create the folder structure
+mkdir -p scripts/db/rotate-secret
 
-docker run -p 5000:5000 \
-  -e SMB_SERVER=fileserver.corp.local \
-  -e SMB_SHARE=installs \
-  -e SMB_USER=svc-devportal \
-  -e SMB_PASSWORD=secret \
-  -e SMB_DOMAIN=CORP \
-  -e TEAM_NAME="Platform Engineering" \
-  devportal
+# 2. Add your script file
+cp my_script.py scripts/db/rotate-secret/script.py
+
+# 3. Add script.yaml (see format above)
+
+# 4. Optionally add a logo
+cp logo.png scripts/db/rotate-secret/logo.png
+
+# 5. Commit, push and open an MR
+git add scripts/db/rotate-secret/
+git commit -m "feat: add rotate-secret script"
+git push origin feat/add-rotate-secret
 ```
 
----
+### Secrets in scripts
 
-## Kubernetes
+Secrets from `eden-secrets` are mounted into workflow pods at `/etc/eden-secrets/` — one file per key. Scripts read them like this:
 
-### Recommended: SMB credentials as a Secret, sites.json as a ConfigMap
+**Python:**
+```python
+def get_secret(name):
+    try:
+        with open(f"/etc/eden-secrets/{name}") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        import os
+        return os.getenv(name)  # fallback for local dev
 
-```yaml
-# secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: devportal-smb
-type: Opaque
-stringData:
-  SMB_SERVER: "fileserver.corp.local"
-  SMB_SHARE: "installs"
-  SMB_USER: "svc-devportal"
-  SMB_PASSWORD: "changeme"
-  SMB_DOMAIN: "CORP"
-
----
-# configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: devportal-sites
-data:
-  sites.json: |
-    [
-      {"name": "Grafana", "url": "http://grafana.internal"},
-      {"name": "ArgoCD",  "url": "http://argocd.internal"}
-    ]
-
----
-# deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: devportal
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: devportal
-  template:
-    metadata:
-      labels:
-        app: devportal
-    spec:
-      containers:
-        - name: devportal
-          image: your-registry/devportal:latest
-          ports:
-            - containerPort: 5000
-          envFrom:
-            - secretRef:
-                name: devportal-smb
-          env:
-            - name: PORTAL_TITLE
-              value: "Dev Portal"
-            - name: TEAM_NAME
-              value: "Platform Engineering"
-          volumeMounts:
-            - name: sites-config
-              mountPath: /app/sites.json
-              subPath: sites.json
-      volumes:
-        - name: sites-config
-          configMap:
-            name: devportal-sites
+token = get_secret("ARTIFACTORY_TOKEN")
 ```
 
-> **Adding a web app link without redeploy:**
-> `kubectl edit configmap devportal-sites` → save → portal picks it up on next page load.
->
-> **Adding an install app:**
-> Drop the folder+file on the SMB share. Portal auto-discovers within 60 seconds.
+**Bash:**
+```bash
+get_secret() {
+  local path="/etc/eden-secrets/$1"
+  [ -f "$path" ] && cat "$path" || echo "${!1}"
+}
+TOKEN=$(get_secret "ARTIFACTORY_TOKEN")
+```
+
+**PowerShell:**
+```powershell
+function Get-Secret($name) {
+    $path = "/etc/eden-secrets/$name"
+    if (Test-Path $path) { return (Get-Content $path -Raw).Trim() }
+    return $env:$name
+}
+$token = Get-Secret "ARTIFACTORY_TOKEN"
+```
+
+The volume mount is defined in your ClusterWorkflowTemplate — Eden does not need to manage it.
+
+### Reload webhook
+
+When an MR is merged in `eden-scripts`, GitLab CI calls:
+
+```
+POST /api/scripts/reload
+X-Reload-Token: <your RELOAD_TOKEN value>
+```
+
+Eden reloads all scripts in the background. Add the snippet from `k8s/gitlab-ci-webhook.yml` to your `eden-scripts` repo's `.gitlab-ci.yml` and set `EDEN_URL` and `EDEN_RELOAD_TOKEN` as masked CI/CD variables in the GitLab project settings.
+
+---
+
+## API Reference
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Main portal page |
+| `GET` | `/api/apps` | JSON list of SMB install apps and versions |
+| `GET` | `/api/scripts` | JSON list of all scripts grouped by team |
+| `POST` | `/api/scripts/reload` | Reload script cache from GitLab (requires `X-Reload-Token` header) |
+| `POST` | `/api/scripts/submit` | Submit a workflow to Argo Workflows |
+| `POST` | `/api/scripts/upload` | Upload a new script and open a GitLab MR |
+| `GET` | `/api/scripts/<team>/<name>/logo` | Proxy script logo from GitLab |
+| `GET` | `/download/<path>` | Stream an installer file from the SMB share |
+| `GET` | `/favicon-proxy/<slug>` | Proxy a site's favicon from the internal network |
+
+---
+
+## Logging
+
+All logs go to stdout in the format:
+
+```
+2024-01-15 10:23:45 INFO     app                  GET / — rendering main page
+2024-01-15 10:23:45 DEBUG    gitlab_client        GitLab GET .../repository/tree → 200
+2024-01-15 10:23:46 INFO     script_store         Team db: loaded 4 scripts
+```
+
+Set `LOG_LEVEL=DEBUG` in `eden-config` for full request and response logging. Token and password values are always redacted from logs regardless of log level.
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Purpose |
+|---|---|---|
+| Backend | Python / Flask | API server and page rendering |
+| Templates | Jinja2 | Server-side HTML rendering |
+| Frontend | Vanilla HTML + CSS + JS | No build step, no framework |
+| SMB | smbprotocol | Pure-Python CIFS client, no OS mount needed |
+| Icon extraction | icoextract + Pillow | Pull icons from .exe/.msi files |
+| HTTP client | requests | GitLab API, Argo API, favicon proxy |
+| YAML parsing | PyYAML | Parse script.yaml files |
+| Production server | Gunicorn | Multi-worker WSGI server |
+| Container | Docker | Image build and deployment |
+| Orchestration | Kubernetes | Runs in `eden-namespace` |
+| Workflow engine | Argo Workflows | Script execution with approval gates |
+| Script storage | GitLab | Source of truth for all scripts |
+
+---
+
+*Eden — Created by Team Genesys*

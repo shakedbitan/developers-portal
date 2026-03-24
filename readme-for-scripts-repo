@@ -1,0 +1,75 @@
+# how to add new scripts?
+eden's scripts repository- supports python, bash and powershell
+
+## How to use parameters in your script?
+
+# TL;DR: copy function to your script. reference parameters as shown below.
+we mount all generic/useful secrets to all pods (i.e ARTIFACTORY_TOKEN, GIT_TOKEN). check out """"""""""" for your existing secrets. if you want to add a new secret, ask team genesys for help.
+the function check if your parameter exists in secrets, if not it uses a regular parameter (that the user passed when he ran the script) 
+
+# python
+    
+```python
+import os
+
+def get_param(name):
+    path = f"/etc/eden-secrets/{name}"
+    try:
+        with open(path) as f:
+            return f.read().strip() # it is a secret
+    except FileNotFoundError:
+        return os.getenv(name) # it is a simple parameter
+
+# refernce parameters:
+artifactory_token = get_param("ARTIFACTORY_TOKEN")
+username = get_param("username")
+```
+
+# bash
+
+```bash
+get_param() {
+  local name=$1
+  local path="/etc/eden-secrets/$name"
+  if [ -f "$path" ]; then
+    cat "$path" # it is a secret
+  else
+    echo "${!name}"  # it is a parameter
+  fi
+}
+
+# reference parameters:
+ARTIFACTORY_TOKEN=$(get_param "ARTIFACTORY_TOKEN")
+username=$(get_param "username")
+
+```
+
+# Powershell
+
+```powershell
+
+function Get-Param($name) {
+    $path = "/etc/eden-secrets/$name"
+    if (Test-Path $path) {
+        return (Get-Content $path -Raw).Trim() # it is a secret
+    }
+    return $env:$name  # it is a parameter
+}
+
+# reference parameters:
+$artifactoryToken = Get-Param "ARTIFACTORY_TOKEN"
+$userName = Get-Param "userName"
+
+```
+
+## explanation
+This project is built like this:
+
+eden-scripts/
+└── scripts/
+    └── <team-name>/
+        └── <script-name>/        ← (e.g. rotate-secret)
+            ├── script.py         ← or script.sh / script.ps1
+            ├── script.yaml       ← metadata, eden generates  this file by itself
+            └── logo.png          ← optional, shown as card image, if not provided it is 
+

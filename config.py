@@ -37,13 +37,14 @@ def _optional(key: str, default: str = "") -> str:
 
 # ── Portal identity ───────────────────────────────────────────────────────────
 PORTAL_TITLE  = _optional("PORTAL_TITLE",  "Eden")
-TEAM_NAME     = _optional("TEAM_NAME",     "Welcome to")
+TEAM_NAME     = _optional("TEAM_NAME",     "Platform Engineering")
 LOG_LEVEL     = _optional("LOG_LEVEL",     "INFO")
 PORT          = int(_optional("PORT",      "5000"))
 
 # ── Sites (web app links) ─────────────────────────────────────────────────────
-# Path to sites.json — should be a ConfigMap volume mount
-SITES_FILE    = _optional("SITES_FILE",    "/config/sites.json")
+# JSON string of sites — set as env var in eden-config ConfigMap
+# Format: '[{"name": "Grafana", "url": "http://grafana.internal"}, ...]'
+SITES_JSON    = _optional("SITES_JSON", "")
 
 # ── SMB / installs share ──────────────────────────────────────────────────────
 SMB_SERVER    = _optional("SMB_SERVER",    "")
@@ -79,4 +80,7 @@ if not RELOAD_TOKEN:
     logger.warning("RELOAD_TOKEN not set — /api/scripts/reload endpoint is UNPROTECTED")
 
 # ── Script store ──────────────────────────────────────────────────────────────
-SCRIPTS_BASE_PATH = _optional("SCRIPTS_BASE_PATH", "scripts")   # path inside the repo
+# SCRIPTS_BASE_PATH: subfolder inside the repo containing team folders.
+# Leave empty if team folders are at the repo root.
+SCRIPTS_BASE_PATH = os.environ.get("SCRIPTS_BASE_PATH", "").strip()
+logger.debug("Config loaded: SCRIPTS_BASE_PATH = '%s'", SCRIPTS_BASE_PATH or "(root)")

@@ -23,8 +23,17 @@ import config
 logger = logging.getLogger(__name__)
 
 # GitLab API base
+# GITLAB_REPO_PATH can be either:
+#   - "group/repo-name"  → encoded as group%2Frepo-name (GitLab standard)
+#   - "12345"            → numeric project ID, no encoding needed
 def _api(path: str) -> str:
-    repo = requests.utils.quote(config.GITLAB_REPO_PATH, safe="")
+    repo_path = config.GITLAB_REPO_PATH.strip()
+    if repo_path.isdigit():
+        # Numeric project ID — use as-is
+        repo = repo_path
+    else:
+        # Namespace/project path — encode / as %2F per GitLab API spec
+        repo = requests.utils.quote(repo_path, safe="")
     return f"{config.GITLAB_URL}/api/v4/projects/{repo}{path}"
 
 
@@ -108,7 +117,8 @@ def fetch_team_scripts(team: str) -> list[dict]:
     Fetch all scripts for a team.
     Returns list of dicts with keys: name, path, has_logo
     """
-    base = f"{config.SCRIPTS_BASE_PATH}/{team}"
+    # Build path — if SCRIPTS_BASE_PATH is empty, teams are at repo root
+    base = f"{config.SCRIPTS_BASE_PATH}/{team}".lstrip("/") if config.SCRIPTS_BASE_PATH else team
     items = list_tree(base)
     scripts = []
     for item in items:
@@ -119,7 +129,7 @@ def fetch_team_scripts(team: str) -> list[dict]:
         # Check what files exist in this script folder
         files = list_tree(script_path)
         file_names = [f["name"] for f in files]
-        has_logo = "logo.png" in file_names
+        has_logo = any(f in file_names for f in ("logo.png", "logo.jpg", "logo.jpeg"))
         has_yaml = "script.yaml" in file_names
         if not has_yaml:
             logger.warning("Script %s/%s has no script.yaml — skipping", team, script_name)
@@ -159,6 +169,7 @@ def create_script_mr(
     yaml_content: str,
     logo_bytes: Optional[bytes],
     approval_required: bool,
+    logo_ext: str = "png",
 ) -> dict:
     """
     Creates a branch, pushes script files, opens an MR.
@@ -166,7 +177,8 @@ def create_script_mr(
     """
     branch = f"add-{script_name}-{int(time.time())}"
     script_ext = {"python": "py", "bash": "sh", "powershell": "ps1"}[language]
-    base_path = f"{config.SCRIPTS_BASE_PATH}/{team}/{script_name}"
+    # Build path — if SCRIPTS_BASE_PATH is empty, teams are at repo root
+    base_path = f"{config.SCRIPTS_BASE_PATH}/{team}/{script_name}".lstrip("/") if config.SCRIPTS_BASE_PATH else f"{team}/{script_name}"
 
     logger.info("Creating MR for script %s/%s branch=%s", team, script_name, branch)
 
@@ -195,7 +207,7 @@ def create_script_mr(
     if logo_bytes:
         actions.append({
             "action": "create",
-            "file_path": f"{base_path}/logo.png",
+            "file_path": f"{base_path}/logo.{logo_ext}",
             "content": base64.b64encode(logo_bytes).decode(),
             "encoding": "base64",
         })

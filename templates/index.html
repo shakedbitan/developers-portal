@@ -31,7 +31,7 @@
         id="search-input"
         class="search-input"
         type="text"
-        placeholder="Search apps, websites and scripts"
+        placeholder="Search apps and websites..."
         autocomplete="off"
         oninput="handleSearch(this.value)"
       />
@@ -69,6 +69,13 @@
               <div class="card-label">
                 <span class="card-name">{{ site.name }}</span>
                 <span class="card-url">{{ site.url }}</span>
+                {% if site.tags %}
+                <div class="site-tags">
+                  {% for tag in site.tags %}
+                  <span class="site-tag" data-tag="{{ tag }}">{{ tag }}</span>
+                  {% endfor %}
+                </div>
+                {% endif %}
               </div>
               <span class="card-ext-icon">↗</span>
             </a>
@@ -87,6 +94,13 @@
               <div class="card-label">
                 <span class="card-name">{{ site.name }}</span>
                 <span class="card-url">{{ site.url }}</span>
+                {% if site.tags %}
+                <div class="site-tags">
+                  {% for tag in site.tags %}
+                  <span class="site-tag" data-tag="{{ tag }}">{{ tag }}</span>
+                  {% endfor %}
+                </div>
+                {% endif %}
               </div>
               <span class="card-ext-icon">↗</span>
             </a>
@@ -165,8 +179,8 @@
 
     <!-- ══ SCRIPTS — one row per team ════════════════════ -->
     <div class="scripts-section-wrap" id="section-scripts">
-      <div class="section-header">
-        <h2 class="section-title">Scripts</h2>
+      <div class="scripts-section-header">
+        <h2 class="scripts-main-title">Scripts</h2>
         {% if not gitlab_configured %}
         <span class="badge-warn">GitLab not configured</span>
         {% endif %}
@@ -227,13 +241,13 @@
       {% endif %}
 
       <!-- Upload button at very bottom -->
-      {% if gitlab_configured %}
       <div class="upload-btn-wrap">
-        <button class="upload-script-btn" onclick="openUploadModal()">
+        <button class="upload-script-btn" onclick="openUploadModal()"
+                {% if not gitlab_configured %}title="GitLab not configured — uploads will fail"{% endif %}>
           <span>+</span> Upload New Script
+          {% if not gitlab_configured %}<span class="badge-warn" style="margin-left:8px;font-size:0.6rem">GitLab not configured</span>{% endif %}
         </button>
       </div>
-      {% endif %}
     </div>
 
   </main>
@@ -350,7 +364,7 @@
           </div>
           <div class="form-group">
             <label class="form-label">Logo <span class="optional">(optional)</span></label>
-            <input class="form-input" id="u-logo" type="file" accept=".png"
+            <input class="form-input" id="u-logo" type="file" accept=".png,.jpg,.jpeg"
                    onchange="validateUploadField('u-logo')"/>
             <div class="field-hint">PNG only, max 2MB</div>
             <div class="field-error" id="u-logo-err"></div>
@@ -406,7 +420,7 @@
 
   <!-- ══ Theme toggle ════════════════════════════════════════ -->
   <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Switch theme">
-    <span id="theme-icon">&#127800;</span>
+    <span id="theme-icon">&#9728;&#65039;</span>
     <span id="theme-label">Light</span>
   </button>
 

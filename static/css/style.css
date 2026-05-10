@@ -37,7 +37,7 @@ body {
 }
 
 .noise {
-  position: fixed; inset: 0; pointer-events: none; z-index: 200;
+  position: fixed; inset: 0; pointer-events: none; z-index: 1;
   opacity: 0.018;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-size: 128px;
@@ -270,18 +270,24 @@ main {
 .card-img-wrap {
   height: 120px;
   background: var(--surface2);
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-bottom: 1px solid var(--border);
   overflow: hidden;
+  text-align: center;
 }
-.site-favicon, .app-card .card-img-wrap img {
+.site-favicon, .app-card .card-img-wrap img, .script-card .card-img-wrap img {
   width: 56px; height: 56px;
   object-fit: contain;
   filter: drop-shadow(0 4px 12px rgba(0,0,0,.5));
   transition: transform .2s ease;
+  display: block;
+  flex-shrink: 0;
 }
 .site-card:hover .site-favicon,
-.app-card:hover .card-img-wrap img { transform: scale(1.08); }
+.app-card:hover .card-img-wrap img,
+.script-card:hover .card-img-wrap img { transform: scale(1.08); }
 
 /* ── Card label area ──────────────────────────────────── */
 .card-label {
@@ -428,6 +434,21 @@ footer { border-top: 1px solid var(--border); padding: 1.4rem 2.5rem; text-align
 }
 .script-card:hover::before { opacity: 1; }
 
+/* Script card — center all text and badges */
+.script-card .card-label {
+  align-items: center;
+  text-align: center;
+}
+.script-card .card-name,
+.script-card .card-meta {
+  text-align: center;
+  width: 100%;
+}
+.script-card .script-badges {
+  justify-content: center;
+  width: 100%;
+}
+
 .script-badges {
   display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px;
 }
@@ -481,6 +502,11 @@ footer { border-top: 1px solid var(--border); padding: 1.4rem 2.5rem; text-align
   display: flex; align-items: center; gap: 10px;
   padding: 16px 22px; border-top: 1px solid var(--border);
   justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.modal-footer .modal-close {
+  width: auto; padding: 0 16px; font-size: 0.75rem;
+  font-family: var(--font-mono);
 }
 .modal-error {
   flex: 1; font-family: var(--font-mono); font-size: 0.7rem;
@@ -539,9 +565,26 @@ footer { border-top: 1px solid var(--border); padding: 1.4rem 2.5rem; text-align
 .toggle-label { font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-muted); }
 
 .arg-row {
-  display: grid;
-  grid-template-columns: 2fr 1fr 0.7fr 0.7fr 0.7fr auto auto;
-  gap: 8px; align-items: start; margin-bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px; align-items: flex-start; margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.arg-row .arg-col { min-width: 100px; flex: 1; }
+.arg-row .arg-col:last-of-type { flex: none; }
+.arg-col-checkbox {
+  flex: none !important;
+  min-width: 70px !important;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.arg-checkbox {
+  width: 18px;
+  height: 18px;
+  margin-top: 6px;
+  cursor: pointer;
 }
 .arg-row .form-input { padding: 7px 10px; font-size: 0.8rem; }
 .arg-label { font-family: var(--font-mono); font-size: 0.58rem; color: var(--text-dim); text-align: center; margin-bottom: 2px; }
@@ -634,3 +677,26 @@ body.theme-light .script-card::before { background: linear-gradient(135deg, rgba
   box-shadow: 0 8px 28px rgba(0,0,0,.6), 0 0 0 1px var(--accent-glow);
 }
 #theme-icon { font-size: 1rem; line-height: 1; }
+
+/* ── Site tags ────────────────────────────────────────── */
+.site-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.site-tag {
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  padding: 2px 7px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  /* color and background set by JS via data-tag hash */
+}
+
+/* Light theme tag adjustments — slightly more saturated */
+body.theme-light .site-tag {
+  filter: saturate(1.1);
+}

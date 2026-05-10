@@ -24,6 +24,48 @@ function esc(str) {
     .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
+// ── Tag colors ───────────────────────────────────────────────────────────────
+// Pastel palette — each tag name always maps to the same color
+const TAG_PALETTE = [
+  { bg: "#ffd6e0", text: "#7d2340" },  // pastel rose
+  { bg: "#fce4b3", text: "#7a4a00" },  // pastel amber
+  { bg: "#d4f0c4", text: "#2d6a1f" },  // pastel green
+  { bg: "#c9e8ff", text: "#1a4f7a" },  // pastel blue
+  { bg: "#e8d5ff", text: "#5a1f8a" },  // pastel purple
+  { bg: "#ffd9c4", text: "#7a3010" },  // pastel orange
+  { bg: "#c4f0ee", text: "#1a5f5c" },  // pastel teal
+  { bg: "#ffd6f5", text: "#7a1a6e" },  // pastel pink
+  { bg: "#e0f0c4", text: "#3d6020" },  // pastel lime
+  { bg: "#d6e4ff", text: "#1a3070" },  // pastel indigo
+  { bg: "#ffe8c4", text: "#7a4a00" },  // pastel peach
+  { bg: "#c4e8d6", text: "#1a5f3d" },  // pastel mint
+];
+
+// Simple deterministic hash: same tag name always → same palette index
+function _tagHash(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  }
+  return h % TAG_PALETTE.length;
+}
+
+// Apply colors to all .site-tag elements on the page
+function applyTagColors() {
+  document.querySelectorAll(".site-tag").forEach(el => {
+    const tag    = el.getAttribute("data-tag") || el.textContent.trim();
+    const palette = TAG_PALETTE[_tagHash(tag)];
+    el.style.background = palette.bg;
+    el.style.color      = palette.text;
+    el.style.border     = `1px solid ${palette.text}30`;
+  });
+}
+
+// Run once on load — wrapped safely so any tag error never breaks other JS
+document.addEventListener("DOMContentLoaded", () => {
+  try { applyTagColors(); } catch(e) { console.warn("applyTagColors error:", e); }
+});
+
 // ── Scroll ────────────────────────────────────────────────────────────────────
 function scrollOuter(outerId, direction) {
   const outer = document.getElementById(outerId);
@@ -100,24 +142,50 @@ function openScriptModal(team, scriptName) {
 
       let input = "";
       if (arg.type === "boolean") {
+        const checked = arg.default === true || arg.default === "true" ? "checked" : "";
+        const exHint  = arg.example ? `<div class="field-hint">e.g. ${esc(arg.example)}</div>` : "";
         input = `
           <div class="toggle-wrap" style="margin-top:6px">
             <label class="toggle-switch">
-              <input type="checkbox" id="arg-${esc(arg.name)}" ${arg.default === true || arg.default === "true" ? "checked" : ""}/>
+              <input type="checkbox" id="arg-${esc(arg.name)}" ${checked}/>
               <span class="toggle-slider"></span>
             </label>
             <span class="toggle-label">Yes / No</span>
-          </div>`;
+          </div>${exHint}`;
+      } else if (arg.type === "select") {
+        const depOn      = arg.depends_on || "";
+        const isDependent = !!(depOn && !Array.isArray(arg.options) && typeof arg.options === "object");
+
+        let opts = "";
+        if (!isDependent) {
+          // Simple select — render all options immediately
+          opts = (arg.options || []).map(o =>
+            `<option value="${esc(String(o))}">${esc(String(o))}</option>`
+          ).join("");
+        }
+
+        // onchange handler — always reacts to self + notifies children
+        const onchangeHandler = `onSelectChange('${esc(arg.name)}')`;
+
+        input = `
+          <select class="run-input" id="arg-${esc(arg.name)}"
+                  onchange="${onchangeHandler}"
+                  ${isDependent ? 'disabled data-dependent="true"' : ''}>
+            <option value="">-- select ${esc(arg.name)} --</option>
+            ${opts}
+          </select>
+          ${isDependent ? `<div class="field-hint">Depends on: <strong>${esc(depOn)}</strong></div>` : ""}`;
       } else {
-        const inputType = arg.type === "integer" ? "number" : "text";
-        const minAttr   = arg.min !== null && arg.min !== undefined ? `min="${arg.min}"` : "";
-        const maxAttr   = arg.max !== null && arg.max !== undefined ? `max="${arg.max}"` : "";
-        const defVal    = arg.default !== undefined && arg.default !== "" ? `value="${esc(String(arg.default))}"` : "";
+        const inputType  = arg.type === "integer" ? "number" : "text";
+        const minAttr    = arg.min !== null && arg.min !== undefined ? `min="${arg.min}"` : "";
+        const maxAttr    = arg.max !== null && arg.max !== undefined ? `max="${arg.max}"` : "";
+        const placeholder = arg.example ? esc(String(arg.example)) : (arg.required ? "Required" : "Optional");
+        const defVal     = arg.default !== undefined && arg.default !== "" ? `value="${esc(String(arg.default))}"` : "";
         input = `
           <div class="run-field-wrap">
             <input class="run-input" id="arg-${esc(arg.name)}"
                    type="${inputType}" ${minAttr} ${maxAttr} ${defVal}
-                   placeholder="${arg.required ? 'Required' : 'Optional'}"
+                   placeholder="${placeholder}"
                    oninput="validateRunField('${esc(arg.name)}')"/>
             ${unit}
           </div>`;
@@ -138,6 +206,65 @@ function openScriptModal(team, scriptName) {
 
   clearElement("script-modal-error");
   openOverlay(scriptOverlay);
+}
+
+// Called when a parent select changes — re-renders any child selects that depend on it
+// Single handler for all select changes — validates self and re-renders children
+function onSelectChange(argName) {
+  if (!_currentScript) return;
+  const el  = document.getElementById(`arg-${argName}`);
+  if (!el) return;
+
+  // Validate this field
+  validateRunField(argName);
+
+  // Re-render any child selects that depend on this arg
+  (_currentScript.args || []).forEach(childArg => {
+    if ((childArg.depends_on || "") !== argName) return;
+
+    const childEl = document.getElementById(`arg-${childArg.name}`);
+    if (!childEl) return;
+
+    const parentVal  = el.value;
+    const optionsMap = childArg.options || {};
+
+    // Clear child
+    childEl.innerHTML = "";
+
+    if (!parentVal) {
+      // Parent has no value — disable child
+      childEl.disabled = true;
+      const placeholder = document.createElement("option");
+      placeholder.value    = "";
+      placeholder.textContent = `Select ${argName} first`;
+      childEl.appendChild(placeholder);
+    } else {
+      // Parent has value — populate child with matching options
+      const choices = Array.isArray(optionsMap)
+        ? optionsMap
+        : (optionsMap[parentVal] || []);
+
+      childEl.disabled = false;
+
+      // Always start with a blank prompt
+      const blank = document.createElement("option");
+      blank.value       = "";
+      blank.textContent = `-- select ${childArg.name} --`;
+      childEl.appendChild(blank);
+
+      choices.forEach(o => {
+        const opt = document.createElement("option");
+        opt.value       = String(o);
+        opt.textContent = String(o);
+        childEl.appendChild(opt);
+      });
+    }
+
+    // Clear child error
+    const errEl = document.getElementById(`arg-${childArg.name}-err`);
+    if (errEl) errEl.textContent = "";
+    childEl.classList.remove("error");
+  });
 }
 
 function buildArgHint(arg) {
@@ -164,6 +291,29 @@ function validateRunField(argName) {
 
   if (argDef.required && !val) {
     error = "This field is required";
+  } else if (argDef.type === "select") {
+    const optionsMap = argDef.options || [];
+    if (argDef.depends_on && !Array.isArray(optionsMap)) {
+      // Dependent select — only validate if parent has a value AND child has a value
+      const parentEl  = document.getElementById(`arg-${argDef.depends_on}`);
+      const parentVal = parentEl ? parentEl.value : "";
+      if (!parentVal || !val) {
+        // Parent not chosen or child blank — clear error, skip
+        input.classList.remove("error");
+        errEl.textContent = "";
+        return !argDef.required || !!val;
+      }
+      const validOpts = (optionsMap[parentVal] || []).map(String);
+      if (validOpts.length && !validOpts.includes(val)) {
+        error = `Must be one of: ${validOpts.join(", ")}`;
+      }
+    } else if (val) {
+      // Simple select — validate against flat options list
+      const validOpts = Array.isArray(optionsMap) ? optionsMap.map(String) : [];
+      if (validOpts.length && !validOpts.includes(val)) {
+        error = `Must be one of: ${validOpts.join(", ")}`;
+      }
+    }
   } else if (val && argDef.type === "integer") {
     const n = Number(val);
     if (!Number.isInteger(n)) {
@@ -188,13 +338,20 @@ async function submitScript() {
   let valid = true;
   const userArgs = {};
   for (const arg of (_currentScript.args || [])) {
-    if (!validateRunField(arg.name)) valid = false;
     const el = document.getElementById(`arg-${arg.name}`);
     if (!el) continue;
     if (arg.type === "boolean") {
       userArgs[arg.name] = el.checked ? "true" : "false";
     } else {
       userArgs[arg.name] = el.value.trim();
+    }
+    if (!validateRunField(arg.name)) valid = false;
+    // Extra check: required dependent select must have a value
+    if (arg.type === "select" && arg.required && !el.value.trim()) {
+      const errEl = document.getElementById(`arg-${arg.name}-err`);
+      if (errEl) errEl.textContent = "This field is required";
+      el.classList.add("error");
+      valid = false;
     }
   }
 
@@ -265,6 +422,14 @@ function openUploadModal() {
     const el = document.getElementById(id);
     if (el) { el.value = el.tagName === "SELECT" ? "" : (id === "u-cpu" ? "200m" : id === "u-memory" ? "256Mi" : ""); }
   });
+  // Clear file inputs explicitly (browsers don't reset these with .value = "")
+  ["u-script-file","u-logo"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { try { el.value = ""; } catch(_) {} }
+  });
+  // Reset script file hint
+  const hint = document.getElementById("u-script-file-hint");
+  if (hint) hint.textContent = "Select a .py, .sh or .ps1 file";
   const approvalEl = document.getElementById("u-approval");
   if (approvalEl) approvalEl.checked = true;
   updateApprovalLabel();
@@ -305,30 +470,80 @@ function addArgRow() {
     <div class="arg-col"><div class="arg-label">Name</div>
       <input class="form-input" id="arg-name-${idx}" type="text" placeholder="my-arg"/></div>
     <div class="arg-col"><div class="arg-label">Type</div>
-      <select class="form-input" id="arg-type-${idx}" onchange="toggleMinMax(${idx})">
+      <select class="form-input" id="arg-type-${idx}" onchange="toggleArgExtras(${idx})">
         <option value="string">string</option>
         <option value="integer">integer</option>
         <option value="boolean">boolean</option>
+        <option value="select">select</option>
       </select></div>
-    <div class="arg-col"><div class="arg-label">Min</div>
-      <input class="form-input" id="arg-min-${idx}" type="number" placeholder="—" disabled/></div>
-    <div class="arg-col"><div class="arg-label">Max</div>
-      <input class="form-input" id="arg-max-${idx}" type="number" placeholder="—" disabled/></div>
-    <div class="arg-col"><div class="arg-label">Unit</div>
+    <div class="arg-col" id="arg-minmax-${idx}" style="display:none"><div class="arg-label">Min</div>
+      <input class="form-input" id="arg-min-${idx}" type="number" placeholder="—"/></div>
+    <div class="arg-col" id="arg-maxcol-${idx}" style="display:none"><div class="arg-label">Max</div>
+      <input class="form-input" id="arg-max-${idx}" type="number" placeholder="—"/></div>
+    <div class="arg-col" id="arg-unitcol-${idx}" style="display:none"><div class="arg-label">Unit</div>
       <input class="form-input" id="arg-unit-${idx}" type="text" placeholder="days"/></div>
-    <div class="arg-col"><div class="arg-label">Req?</div>
-      <input type="checkbox" id="arg-req-${idx}" style="margin-top:22px;width:18px;height:18px"/></div>
+    <div class="arg-col" id="arg-optcol-${idx}" style="display:none">
+      <div class="arg-label">
+        Options
+        <label style="font-size:0.6rem;margin-left:8px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer">
+          <input type="checkbox" id="arg-dep-${idx}" onchange="toggleDependsOn(${idx})" style="width:12px;height:12px;vertical-align:middle"/>
+          depends on another arg
+        </label>
+      </div>
+      <div id="arg-dep-wrap-${idx}" style="display:none;margin-bottom:6px">
+        <input class="form-input" id="arg-dep-name-${idx}" type="text" placeholder="parent-arg-name"
+               style="margin-bottom:4px"/>
+        <div class="field-hint">Then write options as:<br/>
+          <code>dev: proj-a, proj-b</code><br/>
+          <code>prod: proj-x, proj-y</code>
+        </div>
+      </div>
+      <textarea class="form-input" id="arg-options-${idx}" rows="5"
+                placeholder="prod, staging, dev" style="resize:vertical;font-size:0.8rem;min-height:100px;max-height:400px;width:100%"></textarea>
+    </div>
+    <div class="arg-col"><div class="arg-label">Example</div>
+      <input class="form-input" id="arg-example-${idx}" type="text" placeholder="e.g. value"/></div>
+    <div class="arg-col arg-col-checkbox"><div class="arg-label">Required</div>
+      <input type="checkbox" id="arg-req-${idx}" class="arg-checkbox"/></div>
     <button class="remove-arg-btn" onclick="removeArgRow(${idx})" title="Remove">✕</button>`;
   builder.appendChild(row);
 }
 
-function toggleMinMax(idx) {
-  const type = document.getElementById(`arg-type-${idx}`)?.value;
-  const minEl = document.getElementById(`arg-min-${idx}`);
-  const maxEl = document.getElementById(`arg-max-${idx}`);
-  if (minEl) minEl.disabled = type !== "integer";
-  if (maxEl) maxEl.disabled = type !== "integer";
-  if (type !== "integer") { if (minEl) minEl.value = ""; if (maxEl) maxEl.value = ""; }
+function toggleArgExtras(idx) {
+  const type      = document.getElementById(`arg-type-${idx}`)?.value;
+  const minmaxCol = document.getElementById(`arg-minmax-${idx}`);
+  const maxCol    = document.getElementById(`arg-maxcol-${idx}`);
+  const unitCol   = document.getElementById(`arg-unitcol-${idx}`);
+  const optCol    = document.getElementById(`arg-optcol-${idx}`);
+
+  if (minmaxCol) minmaxCol.style.display = type === "integer" ? "" : "none";
+  if (maxCol)    maxCol.style.display    = type === "integer" ? "" : "none";
+  if (unitCol)   unitCol.style.display   = type === "integer" ? "" : "none";
+  if (optCol)    optCol.style.display    = type === "select"  ? "" : "none";
+
+  if (type !== "integer") {
+    const minEl = document.getElementById(`arg-min-${idx}`);
+    const maxEl = document.getElementById(`arg-max-${idx}`);
+    if (minEl) minEl.value = "";
+    if (maxEl) maxEl.value = "";
+  }
+  if (type !== "select") {
+    const optEl = document.getElementById(`arg-options-${idx}`);
+    if (optEl) optEl.value = "";
+  }
+}
+
+function toggleDependsOn(idx) {
+  const checked = document.getElementById(`arg-dep-${idx}`)?.checked;
+  const wrap    = document.getElementById(`arg-dep-wrap-${idx}`);
+  const textarea = document.getElementById(`arg-options-${idx}`);
+  if (wrap) wrap.style.display = checked ? "" : "none";
+  if (textarea) {
+    textarea.placeholder = checked
+      ? "dev: proj-a, proj-b\npp: proj-x\nprod: proj-alpha, proj-beta"
+      : "prod, staging, dev";
+    textarea.value = "";
+  }
 }
 
 function removeArgRow(idx) {
@@ -343,22 +558,51 @@ function buildArgsJson() {
 
   for (const idx of _argRows) {
     if (!document.getElementById(`arg-row-${idx}`)) continue;
-    const name = (document.getElementById(`arg-name-${idx}`)?.value || "").trim();
-    const type = document.getElementById(`arg-type-${idx}`)?.value || "string";
-    const min  = document.getElementById(`arg-min-${idx}`)?.value;
-    const max  = document.getElementById(`arg-max-${idx}`)?.value;
-    const unit = (document.getElementById(`arg-unit-${idx}`)?.value || "").trim();
-    const req  = document.getElementById(`arg-req-${idx}`)?.checked || false;
+    const name    = (document.getElementById(`arg-name-${idx}`)?.value || "").trim();
+    const type    = document.getElementById(`arg-type-${idx}`)?.value || "string";
+    const min     = document.getElementById(`arg-min-${idx}`)?.value;
+    const max     = document.getElementById(`arg-max-${idx}`)?.value;
+    const unit    = (document.getElementById(`arg-unit-${idx}`)?.value || "").trim();
+    const optRaw  = (document.getElementById(`arg-options-${idx}`)?.value || "").trim();
+    const example = (document.getElementById(`arg-example-${idx}`)?.value || "").trim();
+    const req     = document.getElementById(`arg-req-${idx}`)?.checked || false;
 
     if (!name) { errors.push(`Arg #${idx+1}: name is required`); continue; }
     if (!argNameRe.test(name)) { errors.push(`Arg #${idx+1}: name "${name}" must be kebab-case (e.g. my-arg)`); continue; }
+
+    if (type === "select" && !optRaw) {
+      errors.push(`Arg "${name}": select type requires at least one option`); continue;
+    }
 
     const arg = { name, type, required: req };
     if (type === "integer") {
       if (min !== "" && min !== null && min !== undefined) arg.min = Number(min);
       if (max !== "" && max !== null && max !== undefined) arg.max = Number(max);
+      if (unit) arg.unit = unit;
     }
-    if (unit) arg.unit = unit;
+    if (type === "select" && optRaw) {
+      const isDependent = document.getElementById(`arg-dep-${idx}`)?.checked;
+      const depName     = (document.getElementById(`arg-dep-name-${idx}`)?.value || "").trim();
+      if (isDependent && depName) {
+        // Parse dict format: "dev: proj-a, proj-b" / "prod: proj-x" (one per line)
+        arg.depends_on = depName;
+        arg.options    = {};
+        optRaw.split("\n").forEach(line => {
+          const colonIdx = line.indexOf(":");
+          if (colonIdx === -1) return;
+          const key  = line.slice(0, colonIdx).trim();
+          const vals = line.slice(colonIdx + 1).split(",").map(v => v.trim()).filter(Boolean);
+          if (key && vals.length) arg.options[key] = vals;
+        });
+        if (!Object.keys(arg.options).length) {
+          errors.push(`Arg "${name}": no valid options parsed. Format: "key: val1, val2"`);
+          continue;
+        }
+      } else {
+        arg.options = optRaw.split(/[,\n]/).map(o => o.trim()).filter(Boolean);
+      }
+    }
+    if (example) arg.example = example;
     args.push(arg);
   }
   return { args, errors };
@@ -397,16 +641,24 @@ function validateUploadField(fieldId) {
       break;
     case "u-script-file":
       const lang = document.getElementById("u-language")?.value;
-      if (lang && el.files && el.files[0]) {
-        const extMap = { python: ".py", bash: ".sh", powershell: ".ps1" };
-        if (!el.files[0].name.endsWith(extMap[lang] || "")) {
-          error = `For ${lang}, file must end in ${extMap[lang]}`;
+      if (el.files && el.files[0]) {
+        if (lang) {
+          const extMap = { python: ".py", bash: ".sh", powershell: ".ps1" };
+          const expected = extMap[lang] || "";
+          if (expected && !el.files[0].name.endsWith(expected)) {
+            error = `For ${lang}, file must end in ${expected}`;
+          }
         }
+      } else {
+        // File was cleared — clear any previous error
+        error = "";
       }
       break;
     case "u-logo":
       if (el.files && el.files[0]) {
-        if (!el.files[0].name.toLowerCase().endsWith(".png")) error = "Must be a .png file";
+        const logoName = el.files[0].name.toLowerCase();
+        const validLogoExt = [".png", ".jpg", ".jpeg"].some(e => logoName.endsWith(e));
+        if (!validLogoExt) error = "Must be a .png, .jpg or .jpeg file";
         else if (el.files[0].size > 2 * 1024 * 1024) error = "Max 2MB";
       }
       break;
@@ -543,9 +795,17 @@ function handleSearch(query) {
   if (matchedSites.length) {
     html += `<div class="search-group-label">Web Apps</div>`;
     matchedSites.forEach(s => {
+      const tagHtml = (s.tags||[]).map(t => {
+        const p = TAG_PALETTE[_tagHash(t)];
+        return `<span class="site-tag" data-tag="${esc(t)}" style="background:${p.bg};color:${p.text};border:1px solid ${p.text}30">${esc(t)}</span>`;
+      }).join("");
       html += `<a class="search-result-item" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer" onclick="clearSearch()">
         <img class="search-result-img" src="${esc(s.image_url||'/static/icons/_placeholder.svg')}" alt="${esc(s.name)}" onerror="this.src='/static/icons/_placeholder.svg'"/>
-        <div class="search-result-info"><span class="search-result-name">${highlight(s.name,q)}</span><span class="search-result-sub">${esc(s.url)}</span></div>
+        <div class="search-result-info">
+          <span class="search-result-name">${highlight(s.name,q)}</span>
+          <span class="search-result-sub">${esc(s.url)}</span>
+          ${tagHtml ? `<div class="site-tags" style="margin-top:3px">${tagHtml}</div>` : ""}
+        </div>
         <span class="search-result-badge badge-web">web</span></a>`;
     });
   }
@@ -641,14 +901,80 @@ async function refreshAppsData() {
     if (res.ok) appsData = await res.json();
   } catch (_) {}
 }
+// ── Script card rendering ─────────────────────────────────────────────────────
+
+function _buildScriptCard(team, script) {
+  const desc = script.description || "";
+  const shortDesc = desc.length > 50 ? desc.slice(0, 50) + "..." : desc;
+  const approvalBadge = script.approval_required
+    ? `<span class="approval-badge">approval</span>` : "";
+  return `
+    <button class="script-card"
+            onclick="openScriptModal('${esc(team)}', '${esc(script.folder_name)}')"
+            data-name="${esc((script.name || "").toLowerCase())}"
+            data-desc="${esc(desc.toLowerCase())}"
+            data-team="${esc(team)}">
+      <div class="card-img-wrap">
+        <img src="/api/scripts/${esc(team)}/${esc(script.folder_name)}/logo"
+             alt="${esc(script.name)}"
+             onerror="this.src='/static/icons/_placeholder.svg'"/>
+      </div>
+      <div class="card-label">
+        <span class="card-name">${esc(script.name)}</span>
+        <span class="card-meta">${esc(shortDesc)}</span>
+        <div class="script-badges">
+          <span class="lang-badge lang-${esc(script.language)}">${esc(script.language)}</span>
+          ${approvalBadge}
+        </div>
+      </div>
+    </button>`;
+}
+
+function _renderTeamScripts(team, scripts) {
+  const outer = document.getElementById(`scripts-outer-${team}`);
+  if (!outer) return;
+
+  // Update count badge in section header
+  const section = document.getElementById(`section-team-${team}`);
+  if (section) {
+    const countEl = section.querySelector(".section-count");
+    if (countEl) countEl.textContent = scripts.length;
+  }
+
+  if (!scripts || scripts.length === 0) {
+    outer.innerHTML = `
+      <div class="empty-state">
+        <span>No scripts yet for <strong>${esc(team)}</strong></span>
+      </div>`;
+    return;
+  }
+
+  outer.innerHTML = `
+    <div class="cards-row">
+      ${scripts.map(s => _buildScriptCard(team, s)).join("")}
+    </div>`;
+}
+
 async function refreshScriptsData() {
   try {
     const res = await fetch("/api/scripts");
-    if (res.ok) scriptsByTeam = await res.json();
+    if (!res.ok) return;
+    const fresh = await res.json();
+
+    // Re-render any team whose script count changed
+    for (const [team, scripts] of Object.entries(fresh)) {
+      const current = scriptsByTeam[team] || [];
+      if (scripts.length !== current.length) {
+        _renderTeamScripts(team, scripts);
+      }
+    }
+
+    scriptsByTeam = fresh;
   } catch (_) {}
 }
-setInterval(refreshAppsData,   60 * 1000);
-setInterval(refreshScriptsData, 5 * 60 * 1000);
+
+setInterval(refreshAppsData,    60 * 1000);
+setInterval(refreshScriptsData, 15 * 1000);  // check every 15 seconds
 
 // ── Theme toggle ──────────────────────────────────────────────────────────────
 const THEME_KEY = "eden-theme";
@@ -672,8 +998,11 @@ function toggleTheme() {
   try { localStorage.setItem(THEME_KEY, next); } catch (_) {}
   applyTheme(next);
 }
-(function () {
+// Apply saved theme on DOMContentLoaded so elements are guaranteed to exist
+document.addEventListener("DOMContentLoaded", () => {
   let saved = "dark";
   try { saved = localStorage.getItem(THEME_KEY) || "dark"; } catch (_) {}
+  // Migrate stale "pink" key from old versions
+  if (saved === "pink") { saved = "light"; try { localStorage.setItem(THEME_KEY, "light"); } catch(_){} }
   applyTheme(saved);
-})();
+});

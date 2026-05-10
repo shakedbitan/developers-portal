@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eden-config
+  namespace: eden-namespace
+data:
+  # ── Portal identity ──────────────────────────────────
+  PORTAL_TITLE: "Eden"
+  TEAM_NAME: "Platform Engineering"
+  LOG_LEVEL: "INFO"      # Set to DEBUG for troubleshooting
+  PORT: "5000"
+
+  # ── Sites (web app links) ────────────────────────────
+  # JSON array of site objects — edit here to add/remove web app links.
+  # No file mount needed, no rebuild needed — just update this ConfigMap.
+  SITES_JSON: |
+    [
+      {"name": "Grafana",         "url": "http://grafana.internal"},
+      {"name": "ArgoCD",           "url": "http://argocd.internal"},
+      {"name": "Harbor Registry",  "url": "http://harbor.internal"}
+    ]
+
+  # ── GitLab ───────────────────────────────────────────
+  GITLAB_URL: "https://git"
+  GITLAB_REPO_PATH: "your-group/eden-scripts"   # UPDATE THIS
+  GITLAB_DEFAULT_BRANCH: "main"
+
+  # ── Argo Workflows ───────────────────────────────────
+  ARGO_URL: "https://argoworkflow.example"       # UPDATE THIS
+
+  # ── SMB / installs share ─────────────────────────────
+  SMB_SERVER: ""          # e.g. fileserver.corp — leave empty to disable
+  SMB_SHARE: "installs"
+  SMB_BASE_PATH: ""
+  SMB_DOMAIN: ""
+  SMB_CACHE_TTL: "60"
+
+  # ── Teams ────────────────────────────────────────────
+  # Comma-separated. One script row per team in the UI.
+  # Create /scripts/<teamname>/ in eden-scripts repo for each.
+  TEAMS: "db,backend,infra,frontend"             # UPDATE THIS
+
+  # ── Scripts repo ─────────────────────────────────────
+  SCRIPTS_BASE_PATH: "scripts"

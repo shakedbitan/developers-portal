@@ -72,15 +72,25 @@ def _parse_script_yaml(raw: str, team: str, script_name: str, script_path: str, 
     for arg in raw_args:
         if not isinstance(arg, dict):
             continue
+        arg_type = arg.get("type", "string").lower()
+        if arg_type not in ("string", "integer", "boolean", "select"):
+            logger.warning("Unknown arg type '%s' for arg '%s' — defaulting to string",
+                           arg_type, arg.get("name", ""))
+            arg_type = "string"
+        # options can be a list (simple select) or dict (dependent select)
+        raw_options = arg.get("options", [])
         parsed_arg = {
-            "name":     arg.get("name", ""),
-            "type":     arg.get("type", "string"),
-            "required": bool(arg.get("required", False)),
-            "unit":     arg.get("unit", ""),
-            "min":      arg.get("min", None),
-            "max":      arg.get("max", None),
-            "default":  arg.get("default", ""),
+            "name":        arg.get("name", ""),
+            "type":        arg_type,
+            "required":    bool(arg.get("required", False)),
+            "unit":        arg.get("unit", ""),
+            "min":         arg.get("min", None),
+            "max":         arg.get("max", None),
+            "default":     arg.get("default", ""),
             "description": arg.get("description", ""),
+            "example":     str(arg.get("example", "")),
+            "options":     raw_options,        # list or dict — preserved as-is
+            "depends_on":  arg.get("depends_on", ""),  # parent arg name if dependent
         }
         args.append(parsed_arg)
 

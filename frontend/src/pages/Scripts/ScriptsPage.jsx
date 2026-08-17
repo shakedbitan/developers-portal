@@ -69,7 +69,9 @@ function RunModal({ script, team, open, onClose }) {
     setLoading(true);
     try {
       await submitScript({ team, script_name: script.folder_name, args });
-      toast.success('Script submitted!');
+      toast.success(script.approval_required
+        ? 'Script submitted. Contact Genesys team for approval.'
+        : 'Script submitted!');
       onClose();
     } catch (e) {
       setError(e.message);

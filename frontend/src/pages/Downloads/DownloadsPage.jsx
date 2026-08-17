@@ -13,55 +13,57 @@ import { DownloadUploadModal } from '../../components/DownloadUploadModal/Downlo
 import styles from './DownloadsPage.module.css';
 
 const PAGE_SIZE = 48;
-const SEARCH_DELAY_MS = 300;
 
+// image: dropped in manually at frontend/public/category-images/<slug>.svg
+// (or .png/.jpg) -- same convention as site icons in public/site-images/.
+// Falls back to the generic placeholder until a real picture is added.
 const DEFAULT_CATEGORIES = [
   {
     slug: 'development',
     label: 'Development',
-    icon: 'DEV',
+    image: '/category-images/development.svg',
     description: 'Editors, runtimes, SDKs, source bundles, and developer packages.',
   },
   {
     slug: 'infrastructure',
     label: 'IT & Infrastructure',
-    icon: 'OPS',
+    image: '/category-images/infrastructure.svg',
     description: 'Remote access, identity, networking, monitoring, and admin utilities.',
   },
   {
     slug: 'security',
     label: 'Security',
-    icon: 'SEC',
+    image: '/category-images/security.svg',
     description: 'Endpoint protection, scanning tools, and security agents.',
   },
   {
     slug: 'data',
     label: 'Data & Databases',
-    icon: 'DB',
+    image: '/category-images/data.svg',
     description: 'Datasets, database assets, exports, and offline data packages.',
   },
   {
     slug: 'productivity',
     label: 'Productivity & Design',
-    icon: 'UX',
+    image: '/category-images/productivity.svg',
     description: 'Office, graphics, drawing, diagramming, media, and design software.',
   },
   {
     slug: 'utilities',
     label: 'Utilities',
-    icon: 'UTIL',
+    image: '/category-images/utilities.svg',
     description: 'General-purpose tools, compression, cleanup, and system utilities.',
   },
   {
     slug: 'drivers',
     label: 'Drivers & Firmware',
-    icon: 'DRV',
+    image: '/category-images/drivers.svg',
     description: 'Device drivers, firmware images, and hardware support packages.',
   },
   {
     slug: 'other',
     label: 'Other',
-    icon: 'ETC',
+    image: '/category-images/other.svg',
     description: 'Specialist, uncategorized, and miscellaneous offline packages.',
   },
 ];
@@ -194,8 +196,6 @@ export function DownloadsPage({ isAdmin = false }) {
   const [categoriesStatus, setCategoriesStatus] = useState('loading');
   const [categoriesError, setCategoriesError] = useState('');
 
-  const [query, setQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
 
   const [items, setItems] = useState([]);
@@ -215,11 +215,8 @@ export function DownloadsPage({ isAdmin = false }) {
   const [downloadError, setDownloadError] = useState('');
   const [uploadMode, setUploadMode] = useState(null);
 
-  const trimmedQuery = query.trim();
-  const isShortQuery = trimmedQuery.length === 1;
-  const effectiveSearch = debouncedQuery.length >= 2 ? debouncedQuery : '';
-  const effectiveCategory = effectiveSearch ? '' : selectedCategory;
-  const hasCatalogRequest = Boolean(effectiveSearch || effectiveCategory);
+  const effectiveCategory = selectedCategory;
+  const hasCatalogRequest = Boolean(effectiveCategory);
 
   const loadCategories = useCallback(async () => {
     setCategoriesStatus('loading');
@@ -239,15 +236,6 @@ export function DownloadsPage({ isAdmin = false }) {
     loadCategories();
   }, [loadCategories]);
 
-  useEffect(() => {
-    if (trimmedQuery.length < 2) {
-      setDebouncedQuery('');
-      return undefined;
-    }
-    const timer = window.setTimeout(() => setDebouncedQuery(trimmedQuery), SEARCH_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [trimmedQuery]);
-
   const buildCatalogPath = useCallback((pageToken = null) => {
     // `limit`/`cursor` is Eden's canonical contract. The page parameters keep
     // this view compatible with catalogs deployed during the migration window.
@@ -255,7 +243,6 @@ export function DownloadsPage({ isAdmin = false }) {
       limit: String(PAGE_SIZE),
       page_size: String(PAGE_SIZE),
     });
-    if (effectiveSearch) params.set('q', effectiveSearch);
     if (effectiveCategory) params.set('category', effectiveCategory);
     if (pageToken?.type === 'cursor') {
       params.set('cursor', String(pageToken.value));
@@ -263,7 +250,7 @@ export function DownloadsPage({ isAdmin = false }) {
       params.set('page', String(pageToken.value));
     }
     return `/api/downloads?${params.toString()}`;
-  }, [effectiveCategory, effectiveSearch]);
+  }, [effectiveCategory]);
 
   const loadFirstPage = useCallback(async () => {
     catalogAbortRef.current?.abort();
@@ -279,7 +266,7 @@ export function DownloadsPage({ isAdmin = false }) {
     }
 
     const controller = new AbortController();
-    const requestKey = `${effectiveSearch}|${effectiveCategory}`;
+    const requestKey = effectiveCategory;
     catalogAbortRef.current = controller;
     requestKeyRef.current = requestKey;
     setItems([]);
@@ -302,7 +289,7 @@ export function DownloadsPage({ isAdmin = false }) {
       setCatalogError(error.message || 'Downloads could not be loaded.');
       setCatalogStatus('error');
     }
-  }, [buildCatalogPath, effectiveCategory, effectiveSearch, hasCatalogRequest]);
+  }, [buildCatalogPath, effectiveCategory, hasCatalogRequest]);
 
   useEffect(() => {
     loadFirstPage();
@@ -413,12 +400,6 @@ export function DownloadsPage({ isAdmin = false }) {
   useEffect(() => {
     if (location.pathname !== '/downloads') return;
     const navigationState = location.state || {};
-    const incomingQuery = navigationState.downloadQuery;
-    if (typeof incomingQuery === 'string' && incomingQuery.trim().length >= 2) {
-      setSelectedCategory('');
-      setQuery(incomingQuery);
-    }
-
     const incomingItem = navigationState.openDownload;
     const incomingId = catalogId(incomingItem);
     if (incomingItem && incomingId !== null && incomingId !== undefined) {
@@ -512,13 +493,9 @@ export function DownloadsPage({ isAdmin = false }) {
   };
 
   const selectedCategoryInfo = categories.find((category) => category.slug === effectiveCategory);
-  const resultTitle = effectiveSearch
-    ? `Search results for “${effectiveSearch}”`
-    : selectedCategoryInfo?.label || '';
+  const resultTitle = selectedCategoryInfo?.label || '';
 
   const chooseCategory = (slug) => {
-    setQuery('');
-    setDebouncedQuery('');
     setSelectedCategory(slug);
     pageRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -528,7 +505,7 @@ export function DownloadsPage({ isAdmin = false }) {
     if (result?.created_catalog) {
       const uploadedCategory = metadata?.category || result?.item?.category;
       if (uploadedCategory) {
-        const isCurrentCategory = !effectiveSearch && effectiveCategory === uploadedCategory;
+        const isCurrentCategory = effectiveCategory === uploadedCategory;
         chooseCategory(uploadedCategory);
         if (isCurrentCategory) await loadFirstPage();
         return;
@@ -543,74 +520,28 @@ export function DownloadsPage({ isAdmin = false }) {
       className={styles.page}
       aria-busy={catalogStatus === 'loading' || catalogStatus === 'loading-more'}
     >
-      <header className={styles.hero}>
-        <div>
-          <span className={styles.eyebrow}>Offline software catalog</span>
-          <h1 className={styles.title}>Downloads</h1>
-          <p className={styles.intro}>
-            Find available packages without loading the entire archive. Search across the
-            catalog or open a category to begin.
-          </p>
+      {isAdmin && (
+        <div className={styles.topActions}>
+          {/* No size prop -- defaults to "md", matching the unstyled Button
+              calls on the Scripts page (+ Upload New Script / Review MRs).
+              These were explicitly size="sm", the only thing making them
+              smaller than everywhere else the same ghost button appears. */}
+          <Button variant="ghost" onClick={() => setUploadMode('new')}>
+            + Upload new app
+          </Button>
+          <Button variant="ghost" onClick={() => setUploadMode('version')}>
+            + Add version
+          </Button>
         </div>
+      )}
 
-        <div className={styles.searchWrap} role="search">
-          <label className={styles.visuallyHidden} htmlFor="download-search">
-            Search downloads
-          </label>
-          <span className={styles.searchIcon} aria-hidden="true">⌕</span>
-          <input
-            id="download-search"
-            className={styles.searchInput}
-            type="search"
-            value={query}
-            placeholder="Search downloads (2+ characters)"
-            autoComplete="off"
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          {query && (
-            <button
-              type="button"
-              className={styles.clearSearch}
-              aria-label="Clear download search"
-              onClick={() => setQuery('')}
-            >
-              ×
-            </button>
-          )}
-        </div>
-        <div className={styles.searchHint} aria-live="polite">
-          {isShortQuery
-            ? 'Type one more character to search.'
-            : effectiveSearch
-              ? `Searching the full catalog for “${effectiveSearch}”.`
-              : 'Search starts after two characters.'}
-        </div>
-      </header>
-
-      <section className={styles.categoriesSection} aria-labelledby="download-categories-title">
-        <div className={styles.sectionHeading}>
-          <div>
-            <h2 id="download-categories-title">Browse by category</h2>
-            <p>Only the category you select will be loaded.</p>
-          </div>
-          {categoriesStatus === 'loading' && (
-            <span className={styles.inlineStatus} role="status">Refreshing counts…</span>
-          )}
-          {isAdmin && (
-            <div className={styles.headingActions}>
-              <Button variant="ghost" size="sm" onClick={() => setUploadMode('new')}>
-                + Upload new app
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setUploadMode('version')}>
-                + Add version
-              </Button>
-            </div>
-          )}
-        </div>
-
+      <section className={styles.categoriesSection} aria-label="Browse by category">
         {categoriesStatus === 'error' && (
           <div className={styles.categoryNotice} role="status">
-            <span>{categoriesError} You can still browse the catalog.</span>
+            {/* Backend error strings (e.g. "...temporarily unavailable") don't carry
+                a trailing period, so appending a second sentence directly ran the two
+                together with no punctuation between them. */}
+            <span>{categoriesError.replace(/\.?\s*$/, '.')} You can still browse the catalog.</span>
             <button type="button" onClick={loadCategories}>Retry counts</button>
           </div>
         )}
@@ -626,7 +557,13 @@ export function DownloadsPage({ isAdmin = false }) {
               aria-pressed={effectiveCategory === category.slug}
               onClick={() => chooseCategory(category.slug)}
             >
-              <span className={styles.categoryIcon} aria-hidden="true">{category.icon}</span>
+              <span className={styles.categoryPic}>
+                <img
+                  src={category.image}
+                  alt=""
+                  onError={e => { e.target.src = '/icons/placeholder.svg'; }}
+                />
+              </span>
               <span className={styles.categoryCopy}>
                 <span className={styles.categoryName}>{category.label}</span>
                 <span className={styles.categoryDescription}>{category.description}</span>
@@ -642,17 +579,8 @@ export function DownloadsPage({ isAdmin = false }) {
         </div>
       </section>
 
-      <section className={styles.resultsSection} aria-labelledby="download-results-title">
-        {!hasCatalogRequest && (
-          <div className={styles.idleState}>
-            <span className={styles.idleIcon} aria-hidden="true">↓</span>
-            <h2 id="download-results-title">Choose where to start</h2>
-            <p>Select a category above or search with at least two characters.</p>
-          </div>
-        )}
-
-        {hasCatalogRequest && (
-          <>
+      {hasCatalogRequest && (
+        <section className={styles.resultsSection} aria-labelledby="download-results-title">
             <div className={styles.resultsHeading}>
               <div>
                 <h2 id="download-results-title">{resultTitle}</h2>
@@ -720,9 +648,8 @@ export function DownloadsPage({ isAdmin = false }) {
             {catalogStatus === 'ready' && items.length > 0 && !nextCursor && (
               <p className={styles.endMessage}>You’ve reached the end of these results.</p>
             )}
-          </>
-        )}
-      </section>
+        </section>
+      )}
 
       <Modal
         open={Boolean(selectedItem)}

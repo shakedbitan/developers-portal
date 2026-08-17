@@ -12,11 +12,12 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
-  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
   text-decoration: none; color: inherit;
   cursor: pointer;
   position: relative;
 }
+.card:focus-visible { outline: none; box-shadow: var(--card-focus-ring); }
 
 /* ── Home screen small cards — no card box at all.
    Just the icon (its own little colored tile) + a plain label floating
@@ -44,9 +45,9 @@
   opacity: 0; transition: opacity .2s;
 }
 .wrap:hover .card {
-  transform: translateY(-4px);
+  transform: translateY(var(--card-lift));
   border-color: var(--border2);
-  box-shadow: 0 12px 36px rgba(0,0,0,.45), 0 0 0 1px rgba(79,255,176,.08);
+  box-shadow: var(--card-shadow-hover);
   background: color-mix(in srgb, var(--surface) 88%, transparent);
 }
 .wrap:hover .card::before { opacity: 1; }
@@ -80,11 +81,16 @@
   padding: 14px;
   box-sizing: content-box;
   border-radius: 18px;
-  background-color: rgba(7, 6, 6, 0.42);
+  background-color: var(--tile-bg);
   filter: none;
 }
-[data-theme="light"] .small .imgWrap img { background-color: rgba(10, 14, 22, 0.38); }
 .wrap:hover .imgWrap img { transform: scale(1.08); }
+/* Small cards suppress the full card box-shadow entirely (boxless-by-design,
+   see .small .card above), which would otherwise also swallow the
+   :focus-visible ring above -- leaving keyboard users with no focus
+   indicator at all on Home. Put the ring on the icon tile instead, same
+   language GroupedSiteCard already uses for its "open" state. */
+.small .card:focus-visible .imgWrap img { box-shadow: 0 0 0 2px var(--accent); }
 
 /* Label area */
 .label {
@@ -162,11 +168,9 @@
 /* Light theme overrides */
 [data-theme="light"] .starBtn { background: rgba(255,255,255,0.6); color: rgba(15,23,42,0.3); }
 [data-theme="light"] .starred { color: #d97706 !important; }
-[data-theme="light"] .wrap:hover .card {
-  box-shadow: 0 12px 36px rgba(37,99,235,.12), 0 0 0 1px rgba(37,99,235,.1);
-}
-/* Small cards stay box-free on hover in light theme too (same specificity
-   as the rule above, so this needs the extra .small to win). */
+/* Small cards stay box-free on hover in light theme too -- .wrap:hover .card
+   already picks up the right shadow color via var(--card-shadow-hover), this
+   only needs to override it back to none for the boxless small variant. */
 [data-theme="light"] .small .wrap:hover .card,
 [data-theme="light"] .small.wrap:hover .card {
   box-shadow: none;

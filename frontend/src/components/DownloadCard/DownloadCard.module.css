@@ -21,7 +21,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(120deg, rgba(79, 255, 176, 0.045), rgba(0, 201, 255, 0.035));
+  background: linear-gradient(120deg, rgba(79, 255, 176, 0.05), rgba(0, 201, 255, 0.04));
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.18s;
@@ -29,10 +29,10 @@
 
 .card:hover,
 .card:focus-visible {
-  transform: translateY(-3px);
+  transform: translateY(var(--card-lift));
   border-color: var(--border2);
-  background: color-mix(in srgb, var(--surface) 90%, transparent);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.38);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow: var(--card-shadow-hover);
   outline: none;
 }
 
@@ -73,6 +73,7 @@
   line-height: 1.4;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .meta {

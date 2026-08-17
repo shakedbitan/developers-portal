@@ -22,5 +22,10 @@ frontend/.vite/
 .DS_Store
 Thumbs.db
 
+# Claude Code / local tooling state (machine-local, not shared config)
+.claude/
+.impeccable/
+frontend/.impeccable/
+
 # Logs
 *.log

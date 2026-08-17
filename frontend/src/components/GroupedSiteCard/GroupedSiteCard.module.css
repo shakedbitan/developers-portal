@@ -14,7 +14,7 @@
   position: absolute;
   left: 0; width: 100%;
   height: 38px;
-  background: rgba(7, 6, 6, 0.42);
+  background: var(--tile-bg);
   border: 2px solid transparent;
   border-radius: var(--radius-sm);
   display: flex; align-items: center; gap: 10px;
@@ -27,14 +27,8 @@
     border-color .15s ease;
   cursor: pointer;
 }
-[data-theme="light"] .envRow {
-  background: rgba(10, 14, 22, 0.38);
-}
 .envRow:hover {
-  background: rgba(7, 6, 6, 0.65);
-}
-[data-theme="light"] .envRow:hover {
-  background: rgba(10, 14, 22, 0.55);
+  background: var(--tile-bg-hover);
 }
 .envBullet {
   width: 8px; height: 8px;
@@ -67,7 +61,7 @@
   transition: transform .18s;
 }
 .wrap:not(.open):hover .mainCard {
-  transform: translateY(-4px);
+  transform: translateY(var(--card-lift));
 }
 
 /* ── Card innards ── */
@@ -88,10 +82,9 @@
   padding: 14px;
   box-sizing: content-box;
   border-radius: 18px;
-  background-color: rgba(7, 6, 6, 0.42);
+  background-color: var(--tile-bg);
   transition: box-shadow .18s;
 }
-[data-theme="light"] .imgWrap img { background-color: rgba(10, 14, 22, 0.38); }
 /* "Open" state ring on the tile itself, replacing the old card border cue */
 .open .imgWrap img {
   box-shadow: 0 0 0 2px var(--accent);

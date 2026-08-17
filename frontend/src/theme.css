@@ -26,6 +26,16 @@
   --radius:    14px;
   --radius-sm: 8px;
   --radius-xs: 4px;
+
+  /* Shared card decoration -- was hand-copied (and drifting slightly)
+     across SiteCard/ScriptCard/DownloadCard/GroupedSiteCard. One recipe,
+     referenced everywhere, so every card lifts/glows/tiles identically
+     and gets the light-theme variant for free. */
+  --tile-bg:          rgba(7, 6, 6, 0.42);
+  --tile-bg-hover:    rgba(7, 6, 6, 0.65);
+  --card-shadow-hover: 0 12px 36px rgba(0, 0, 0, .45), 0 0 0 1px rgba(79, 255, 176, .08);
+  --card-focus-ring:   0 0 0 3px var(--accent-glow);
+  --card-lift:         -4px;
 }
 
 /* ── Light theme ─────────────────────────────────────── */
@@ -45,6 +55,10 @@
   --warn:        #d97706;
   --danger:      #dc2626;
   --success:     #16a34a;
+
+  --tile-bg:           rgba(10, 14, 22, 0.38);
+  --tile-bg-hover:     rgba(10, 14, 22, 0.55);
+  --card-shadow-hover: 0 12px 36px rgba(37, 99, 235, .12), 0 0 0 1px rgba(37, 99, 235, .1);
 }
 
 /* ── Base ────────────────────────────────────────────── */

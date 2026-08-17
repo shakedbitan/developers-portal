@@ -8,6 +8,7 @@
 .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none !important; }
 .btn:not(:disabled):hover { transform: translateY(-1px); }
 .btn:not(:disabled):active { transform: translateY(0); }
+.btn:focus-visible { outline: none; box-shadow: var(--card-focus-ring); }
 
 /* Sizes */
 .sm { font-size: 0.68rem; padding: 6px 14px; }

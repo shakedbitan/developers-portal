@@ -1,80 +1,92 @@
+/* CRT-glow terminal window, no language/approval badges — just a picture,
+   a name on a "$" prompt, and a description as a "#" comment. Deliberately
+   stays dark regardless of Eden's light/dark toggle: the scanline texture
+   and glow only read correctly on a near-black ground, same as most code
+   editors keep a dark terminal pane even in a light theme. */
 .card {
+  position: relative;
   display: flex; flex-direction: column;
-  background: var(--surface);
-  backdrop-filter: blur(6px);
+  background:
+    repeating-linear-gradient(rgba(255, 255, 255, .018) 0px, rgba(255, 255, 255, .018) 1px, transparent 1px, transparent 3px),
+    radial-gradient(120% 90% at 50% -10%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 60%),
+    #04060a;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
   cursor: pointer; text-align: left;
-  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
-  position: relative; color: inherit;
+  color: inherit;
   font-family: var(--font-ui);
-  /* No fixed aspect-ratio — card height grows with description */
+  transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
 }
-.card::before {
-  content: '';
-  position: absolute; inset: 0;
-  background: linear-gradient(135deg, rgba(79,255,176,.05), rgba(0,201,255,.04));
-  opacity: 0; transition: opacity .2s; pointer-events: none;
+.card:hover,
+.card:focus-visible {
+  transform: translateY(var(--card-lift));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border2));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent),
+    0 20px 40px rgba(0, 0, 0, .45),
+    0 0 32px -8px color-mix(in srgb, var(--accent) 45%, transparent);
+  outline: none;
 }
-.card:hover {
-  transform: translateY(-4px);
-  border-color: var(--border2);
-  box-shadow: 0 12px 36px rgba(0,0,0,.45), 0 0 0 1px rgba(79,255,176,.08);
-}
-.card:hover::before { opacity: 1; }
+/* Declared after the combined hover+focus-visible rule above so it wins on
+   the box-shadow specifically -- keyboard focus gets its own ring instead
+   of the hover glow, same pattern every other card in the app uses. */
+.card:focus-visible { box-shadow: var(--card-focus-ring); }
 
-.imgWrap {
-  height: 110px; flex-shrink: 0;
-  background: color-mix(in srgb, var(--surface2) 65%, transparent);
+/* Window-frame chrome — traffic-light dots, purely decorative */
+.chrome {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, .025);
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; opacity: .55; flex-shrink: 0; }
+.dotR { background: #f87171; }
+.dotY { background: #fbbf24; }
+.dotG { background: #4ade80; }
+
+.body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+
+/* Picture + path */
+.top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.imgTile {
+  width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+  background: var(--tile-bg);
   display: flex; align-items: center; justify-content: center;
-  border-bottom: 1px solid var(--border);
   overflow: hidden;
 }
-.imgWrap img {
-  width: 64px; height: 64px;
-  object-fit: contain;
-  filter: drop-shadow(0 4px 12px rgba(0,0,0,.5));
-  transition: transform .2s ease;
+.imgTile img { width: 16px; height: 16px; object-fit: contain; }
+.path {
+  font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
-.card:hover .imgWrap img { transform: scale(1.08); }
 
-.label {
-  padding: 10px 12px 12px;
-  display: flex; flex-direction: column;
-  align-items: center; gap: 5px;
-  text-align: center;
+/* Name as a shell prompt */
+.prompt { font-family: var(--font-mono); font-size: 0.85rem; }
+.sigil { color: var(--accent); }
+.name { color: var(--text); font-weight: 600; }
+
+/* Cursor sits solid at rest; only blinks while the card is being engaged
+   with (hover or keyboard focus) -- a calm default, a small sign of life
+   on interaction rather than a constant distraction across a whole grid. */
+.cursor {
+  display: inline-block; width: 0.5em; height: 1em;
+  background: var(--accent);
+  vertical-align: -0.15em; margin-left: 2px;
 }
-.name {
-  font-size: 0.82rem; font-weight: 600; color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  width: 100%;
+.card:hover .cursor,
+.card:focus-visible .cursor {
+  animation: blink 1.1s step-end infinite;
 }
+@keyframes blink { 0%, 45% { opacity: 1; } 50%, 95% { opacity: 0; } 100% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .cursor { animation: none !important; opacity: 1; }
+}
+
+/* Description as a comment */
 .desc {
-  font-family: var(--font-mono); font-size: 0.62rem;
-  color: var(--text-muted); line-height: 1.45;
-  /* Full description — no truncation */
+  font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-dim);
+  line-height: 1.6;
   white-space: pre-wrap; word-break: break-word;
-  width: 100%;
 }
-
-.badges {
-  display: flex; gap: 4px; flex-wrap: wrap; justify-content: center;
-  margin-top: 4px;
-}
-.langBadge {
-  font-family: var(--font-mono); font-size: 0.52rem;
-  padding: 2px 5px; border-radius: 4px;
-  text-transform: uppercase; letter-spacing: 0.08em;
-}
-.lang_python     { background: rgba(59,130,246,.15); color: #60a5fa; border: 1px solid rgba(59,130,246,.3); }
-.lang_bash       { background: rgba(34,197,94,.15);  color: #4ade80; border: 1px solid rgba(34,197,94,.3); }
-.lang_powershell { background: rgba(168,85,247,.15); color: #c084fc; border: 1px solid rgba(168,85,247,.3); }
-
-.approvalBadge {
-  font-family: var(--font-mono); font-size: 0.52rem;
-  padding: 2px 5px; border-radius: 4px;
-  background: rgba(251,191,36,.15); color: #fbbf24;
-  border: 1px solid rgba(251,191,36,.3);
-  text-transform: uppercase; letter-spacing: 0.08em;
-}
+.desc::before { content: '# '; color: color-mix(in srgb, var(--text-dim) 70%, transparent); }

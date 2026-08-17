@@ -24,7 +24,9 @@
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  /* Wider terminal windows read more like real terminals, and give the
+     ~/scripts/<name> path line room to breathe instead of truncating. */
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 16px;
 }
 

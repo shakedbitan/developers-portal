@@ -1,0 +1,101 @@
+.page {
+  padding: 2rem;
+  height: 100%;
+  overflow-y: auto;
+  /* Scroll internally first; snap fires only when this hits the bottom */
+  box-sizing: border-box;
+}
+
+.section { margin-bottom: 2.5rem; }
+.sectionHeader {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 1rem;
+}
+.sectionTitle { font-size: 0.8rem; font-weight: 700; color: var(--text); }
+.hint { font-family: var(--font-mono); font-size: 0.65rem; color: var(--text-dim); margin-left: auto; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.actions {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  padding-top: 2rem; border-top: 1px solid var(--border);
+  margin-top: 1rem;
+}
+
+.empty {
+  font-family: var(--font-mono); font-size: 0.75rem;
+  color: var(--text-muted); padding: 2rem 0;
+}
+.loading {
+  font-family: var(--font-mono); font-size: 0.75rem;
+  color: var(--text-muted); padding: 1rem;
+}
+.deleteMsg { font-size: 0.9rem; color: var(--text); line-height: 1.6; }
+
+/* Pending list */
+.pendingItem {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.pendingItem:last-child { border-bottom: none; }
+.pendingItem img { width: 36px; height: 36px; object-fit: contain; border-radius: 6px; flex: none; }
+.pendingInfo { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.pendingName { font-weight: 600; font-size: 0.9rem; }
+.pendingMeta { font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-muted); }
+.pendingActions { display: flex; gap: 6px; }
+
+/* Form */
+.form { display: flex; flex-direction: column; gap: 14px; }
+.formGroup { display: flex; flex-direction: column; gap: 5px; }
+.label {
+  font-family: var(--font-mono); font-size: 0.65rem;
+  color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em;
+}
+.input {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text);
+  font-family: var(--font-ui); font-size: 1rem;
+  padding: 9px 12px; outline: none;
+  transition: border-color .15s, box-shadow .15s;
+  width: 100%;
+}
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+.hint { font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-dim); }
+.divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+
+.infoIcon {
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: default;
+  position: relative;
+  text-transform: none;  /* the label it sits in is uppercase; without this
+                             the browser's Unicode case-mapping turns the
+                             circled lowercase "i" (ⓘ) into a capital (Ⓘ) */
+}
+/* No custom tooltip — the native title="" attribute on the icon already
+   shows the browser's own tooltip on hover, which is all that's wanted. */
+
+.envColorRow {
+  display: flex; align-items: center; gap: 8px;
+}
+.envColorDot {
+  width: 12px; height: 12px; border-radius: 50%; flex: none;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.15);
+}
+
+.tagHint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
+}

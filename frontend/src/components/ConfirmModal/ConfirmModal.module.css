@@ -1,0 +1,38 @@
+.backdrop {
+  position: fixed; inset: 0; z-index: 600;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+}
+.box {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  padding: 28px 32px;
+  max-width: 380px; width: 90%;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+  display: flex; flex-direction: column; gap: 20px;
+}
+.msg {
+  font-size: 0.95rem; color: var(--text);
+  line-height: 1.5; text-align: center;
+}
+.actions {
+  display: flex; gap: 10px; justify-content: center;
+}
+.cancelBtn {
+  padding: 9px 24px;
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: var(--radius-sm); color: var(--text-muted);
+  font-family: var(--font-mono); font-size: 0.75rem;
+  cursor: pointer; transition: background .15s, color .15s;
+}
+.cancelBtn:hover { background: var(--surface3); color: var(--text); }
+.confirmBtn {
+  padding: 9px 24px;
+  background: rgba(248,113,113,0.15); border: 1px solid rgba(248,113,113,0.4);
+  border-radius: var(--radius-sm); color: var(--danger);
+  font-family: var(--font-mono); font-size: 0.75rem;
+  cursor: pointer; transition: background .15s;
+}
+.confirmBtn:hover { background: rgba(248,113,113,0.3); }

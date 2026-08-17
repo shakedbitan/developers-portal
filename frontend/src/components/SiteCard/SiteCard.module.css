@@ -1,0 +1,197 @@
+.wrap {
+  position: relative;
+  display: block;
+  width: 100%;   /* fill whatever width the grid assigns */
+}
+
+.card {
+  display: flex; flex-direction: column;
+  width: 100%;   /* fill the wrap which fills the grid cell */
+  background: var(--surface);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+  text-decoration: none; color: inherit;
+  cursor: pointer;
+  position: relative;
+}
+
+/* ── Home screen small cards — no card box at all.
+   Just the icon (its own little colored tile) + a plain label floating
+   directly on the page background, like a phone/start-menu icon grid. ── */
+.small .card {
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: none;
+  box-shadow: none;
+}
+/* Reset the base hover box too — small cards only lift + the icon scales,
+   no background/border/shadow appears. */
+.small.wrap:hover .card,
+.small .wrap:hover .card {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+.small .card::before { display: none; }
+.card::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(135deg, rgba(79,255,176,.05), rgba(0,201,255,.04));
+  opacity: 0; transition: opacity .2s;
+}
+.wrap:hover .card {
+  transform: translateY(-4px);
+  border-color: var(--border2);
+  box-shadow: 0 12px 36px rgba(0,0,0,.45), 0 0 0 1px rgba(79,255,176,.08);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+.wrap:hover .card::before { opacity: 1; }
+
+/* Image area */
+.imgWrap {
+  height: 150px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--surface2) 65%, transparent);
+  display: flex; align-items: center; justify-content: center;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+/* Small cards (home screen) get a smaller image area, no background of
+   its own — the icon itself carries a little colored tile instead (below). */
+.small .imgWrap { height: 76px; background: none; border-bottom: none; }
+.imgWrap img {
+  width: 100px; height: 100px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 12px rgba(0,0,0,.5));
+  transition: transform .2s ease;
+  display: block;
+}
+/* Icon tile — like an app icon sitting on its own rounded-square background.
+   Always the same neutral dark chip, regardless of the site's tags/banner
+   color (deprecated/new/etc.) — that status color is for the WebApps-page
+   diagonal banner ribbon only, not this tile. */
+.small .imgWrap img {
+  width: 40px; height: 40px;
+  object-fit: contain;
+  padding: 14px;
+  box-sizing: content-box;
+  border-radius: 18px;
+  background-color: rgba(7, 6, 6, 0.42);
+  filter: none;
+}
+[data-theme="light"] .small .imgWrap img { background-color: rgba(10, 14, 22, 0.38); }
+.wrap:hover .imgWrap img { transform: scale(1.08); }
+
+/* Label area */
+.label {
+  padding: 8px 10px 10px;
+  display: flex; flex-direction: column;
+  align-items: stretch;  /* let name fill full width */
+  gap: 4px;
+  text-align: center;
+  min-height: 36px;
+  flex: 1;               /* take remaining card height */
+}
+.name {
+  font-size: 1rem; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  width: 100%; text-align: center; display: block;
+}
+.small .label { min-height: 36px; padding: 5px 6px 7px; background: none; gap:2px; }
+.small .name {
+  font-size: 0.82rem; color: #fff;
+  text-shadow: 0 1px 4px rgba(0,0,0,.85), 0 0 1px rgba(0,0,0,.6);
+}
+
+/* Tags */
+.tags {
+  display: flex; flex-wrap: wrap; gap: 3px;
+  justify-content: center;
+}
+.tag {
+  font-family: var(--font-mono); font-size: 0.6rem;
+  padding: 2px 7px; border-radius: 999px;
+  white-space: nowrap; letter-spacing: 0.04em;
+}
+.small .tags { display: none; } /* hide tags on small home cards */
+
+/* Star button */
+.starBtn {
+  position: absolute; top: 7px; left: 7px; z-index: 5;
+  background: rgba(0,0,0,0.4); border: none;
+  width: 24px; height: 24px; border-radius: 50%;
+  color: rgba(255,255,255,0.35); font-size: 0.9rem;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity .15s, color .15s, transform .15s;
+}
+.wrap:hover .starBtn { opacity: 1; }
+.starred { opacity: 1 !important; color: #fbbf24 !important; }
+.starBtn:hover { transform: scale(1.15); }
+
+/* Admin buttons */
+.editBtn, .delBtn {
+  position: absolute; top: 7px; z-index: 5;
+  border: none; border-radius: var(--radius-xs);
+  font-family: var(--font-mono); font-size: 0.52rem;
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 3px 6px; cursor: pointer;
+  opacity: 0; transition: opacity .15s, background .15s;
+}
+.wrap:hover .editBtn,
+.wrap:hover .delBtn { opacity: 1; }
+
+.editBtn {
+  right: 38px;
+  background: rgba(59,130,246,0.25); color: #93c5fd;
+  border: 1px solid rgba(59,130,246,0.4);
+}
+.editBtn:hover { background: rgba(59,130,246,.5); }
+
+.delBtn {
+  right: 7px;
+  background: rgba(239,68,68,0.25); color: #f87171;
+  border: 1px solid rgba(239,68,68,0.4);
+}
+.delBtn:hover { background: rgba(239,68,68,.5); }
+
+/* Light theme overrides */
+[data-theme="light"] .starBtn { background: rgba(255,255,255,0.6); color: rgba(15,23,42,0.3); }
+[data-theme="light"] .starred { color: #d97706 !important; }
+[data-theme="light"] .wrap:hover .card {
+  box-shadow: 0 12px 36px rgba(37,99,235,.12), 0 0 0 1px rgba(37,99,235,.1);
+}
+/* Small cards stay box-free on hover in light theme too (same specificity
+   as the rule above, so this needs the extra .small to win). */
+[data-theme="light"] .small .wrap:hover .card,
+[data-theme="light"] .small.wrap:hover .card {
+  box-shadow: none;
+}
+
+/* ── Diagonal tag banner (WebApps page only, not on small/home cards) ── */
+.banner {
+  position: absolute;
+  /* Position so the banner ribbon spans corner-to-corner of the top-left.
+     The card imgWrap is 72px tall. At -38deg, we need the strip wide enough
+     to reach both left and right edges of the card.
+     We use overflow:hidden on imgWrap to clip it cleanly. */
+  top: 26px;
+  left: -40px;
+  width: 160px;        /* wide enough to reach card edges after rotation */
+  color: #fff;  /* background set inline from BANNER_COLORS */
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-align: center;
+  padding: 4px 0;
+  transform: rotate(-38deg);
+  transform-origin: center;
+  z-index: 4;          /* below star (z-index:5) */
+  pointer-events: none;
+  text-transform: uppercase;
+  white-space: nowrap;
+}

@@ -1,9 +1,0 @@
-volumes:
-  - name: eden-secrets
-    secret:
-      secretName: eden-secrets
-containers:
-  - volumeMounts:
-      - name: eden-secrets
-        mountPath: /etc/eden-secrets
-        readOnly: true

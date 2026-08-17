@@ -1,0 +1,229 @@
+[
+  {
+    "team": "db",
+    "scripts": [
+      {
+        "name": "rotate-secret",
+        "description": "Rotate a Kubernetes secret and restart dependent pods",
+        "language": "python",
+        "approval_required": true,
+        "dependencies": ["kubernetes", "hvac"],
+        "resources": { "cpu": "200m", "memory": "256Mi" },
+        "args": [
+          {
+            "name": "environment",
+            "type": "select",
+            "required": true,
+            "options": ["dev", "staging", "prod"],
+            "description": "Target environment"
+          },
+          {
+            "name": "dry_run",
+            "type": "boolean",
+            "required": false,
+            "default": "true",
+            "description": "Preview changes without applying them"
+          }
+        ]
+      },
+      {
+        "name": "backup-database",
+        "description": "Trigger an on-demand backup of a named database",
+        "language": "bash",
+        "approval_required": false,
+        "dependencies": [],
+        "resources": { "cpu": "500m", "memory": "512Mi" },
+        "args": [
+          {
+            "name": "database_name",
+            "type": "string",
+            "required": true,
+            "example": "billing-prod"
+          },
+          {
+            "name": "retention_days",
+            "type": "integer",
+            "required": false,
+            "default": "30",
+            "unit": "days",
+            "min": 1,
+            "max": 365
+          }
+        ]
+      },
+      {
+        "name": "restore-snapshot",
+        "description": "Restore a database from a point-in-time snapshot",
+        "language": "python",
+        "approval_required": true,
+        "dependencies": ["boto3"],
+        "resources": { "cpu": "500m", "memory": "1Gi" },
+        "args": [
+          {
+            "name": "environment",
+            "type": "select",
+            "required": true,
+            "options": ["dev", "staging", "prod"]
+          },
+          {
+            "name": "snapshot_id",
+            "type": "string",
+            "required": true,
+            "example": "snap-20260810-0300"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "team": "backend",
+    "scripts": [
+      {
+        "name": "clear-cache",
+        "description": "Flush the Redis cache for a specific service",
+        "language": "python",
+        "approval_required": false,
+        "dependencies": ["redis"],
+        "resources": { "cpu": "100m", "memory": "128Mi" },
+        "args": [
+          {
+            "name": "service",
+            "type": "select",
+            "required": true,
+            "options": ["api", "worker", "scheduler"]
+          },
+          {
+            "name": "confirm",
+            "type": "boolean",
+            "required": true,
+            "default": "false"
+          }
+        ]
+      },
+      {
+        "name": "deploy-hotfix",
+        "description": "Fast-track a hotfix branch straight to production",
+        "language": "powershell",
+        "approval_required": true,
+        "dependencies": [],
+        "resources": { "cpu": "250m", "memory": "256Mi" },
+        "args": [
+          {
+            "name": "branch",
+            "type": "string",
+            "required": true,
+            "example": "hotfix/checkout-crash"
+          },
+          {
+            "name": "skip_tests",
+            "type": "boolean",
+            "required": false,
+            "default": "false"
+          }
+        ]
+      },
+      {
+        "name": "run-custom-script",
+        "description": "Execute an ad-hoc JavaScript file against the backend runtime",
+        "language": "python",
+        "approval_required": true,
+        "dependencies": ["node"],
+        "resources": { "cpu": "200m", "memory": "256Mi" },
+        "args": [
+          {
+            "name": "target",
+            "type": "select",
+            "required": true,
+            "options": ["api", "worker", "scheduler"],
+            "description": "Which service to run the script against"
+          },
+          {
+            "name": "script",
+            "type": "js_file",
+            "required": true,
+            "description": "JavaScript file to upload and execute"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "team": "infra",
+    "scripts": [
+      {
+        "name": "scale-deployment",
+        "description": "Scale a deployment's replica count up or down",
+        "language": "bash",
+        "approval_required": false,
+        "dependencies": ["kubectl"],
+        "resources": { "cpu": "100m", "memory": "128Mi" },
+        "args": [
+          {
+            "name": "namespace",
+            "type": "select",
+            "required": true,
+            "options": ["db", "backend", "infra"]
+          },
+          {
+            "name": "replicas",
+            "type": "integer",
+            "required": true,
+            "min": 0,
+            "max": 20,
+            "default": "3"
+          }
+        ]
+      },
+      {
+        "name": "rotate-tls-cert",
+        "description": "Force-renew the TLS certificate for a cluster ingress",
+        "language": "python",
+        "approval_required": true,
+        "dependencies": ["kubernetes", "cryptography"],
+        "resources": { "cpu": "200m", "memory": "256Mi" },
+        "args": [
+          {
+            "name": "cluster",
+            "type": "select",
+            "required": true,
+            "options": ["prod-east", "prod-west"]
+          },
+          {
+            "name": "force",
+            "type": "boolean",
+            "required": false,
+            "default": "false"
+          }
+        ]
+      },
+      {
+        "name": "provision-vm",
+        "description": "Provision a new virtual machine in a region",
+        "language": "python",
+        "approval_required": true,
+        "dependencies": ["terraform"],
+        "resources": { "cpu": "300m", "memory": "512Mi" },
+        "args": [
+          {
+            "name": "region",
+            "type": "select",
+            "required": true,
+            "options": ["us-east", "us-west"],
+            "description": "Region to provision into"
+          },
+          {
+            "name": "size",
+            "type": "select",
+            "required": true,
+            "depends_on": "region",
+            "options": {
+              "us-east": ["small", "medium", "large"],
+              "us-west": ["small", "medium"]
+            },
+            "description": "Instance size (options depend on region)"
+          }
+        ]
+      }
+    ]
+  }
+]

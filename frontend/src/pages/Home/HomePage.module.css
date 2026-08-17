@@ -1,0 +1,48 @@
+.page {
+  display: flex; flex-direction: column;
+  height: 100%;
+  padding: 0 2rem 2rem;
+  overflow-x: hidden;
+  overflow-y: visible;  /* allow grouped cards to expand upward past the bottom */
+  box-sizing: border-box;
+}
+.spacer { flex: 1; }
+
+.bottom {
+  flex-shrink: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow: visible;  /* allow grouped cards to expand upward */
+}
+
+.label {
+  font-family: var(--font-mono); font-size: 0.68rem;
+  text-transform: uppercase; letter-spacing: 0.2em;
+  color: var(--text-muted); margin-bottom: 1rem;
+  text-align: center;
+  width: 100%;
+}
+
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  align-items: flex-end;    /* sit at bottom so groups expand upward */
+  overflow: visible;        /* allow env rows to expand above grid */
+  width: 100%;
+}
+
+/* Each dnd-kit wrapper card gets a fixed width */
+.grid > div {
+  width: 92px;
+  flex-shrink: 0;
+}
+
+.empty {
+  text-align: center;
+  font-family: var(--font-mono); font-size: 0.75rem;
+  color: var(--text-muted); padding: 2rem 0;
+}

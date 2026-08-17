@@ -1,0 +1,174 @@
+/* .wrap is just a full-viewport, click-through layer now — .inner itself
+   is position:fixed and carries all the real positioning, so it (and only
+   it) can smoothly animate between "big bar under the TopBar" (Home) and
+   "small pill docked in the TopBar" (every other screen). */
+.wrap {
+  position: fixed;
+  inset: 0;
+  /* Must beat .topbar's z-index (200) — when docked, the pill sits inside
+     the TopBar's own vertical space, and at the old z-index:190 the
+     TopBar's background rendered on top of it, hiding it completely and
+     eating its clicks. Still well under Modal's backdrop (500). */
+  z-index: 205;
+  pointer-events: none;
+}
+
+.inner {
+  position: fixed;
+  pointer-events: all;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  padding: 0 16px;
+  box-sizing: border-box;
+  backdrop-filter: blur(12px);
+  /* No overflow:hidden — .results (the dropdown) is an absolutely
+     positioned child that extends below this box, and hiding overflow
+     here clips it into invisibility. */
+  transition:
+    top .35s cubic-bezier(.4,0,.2,1),
+    left .35s cubic-bezier(.4,0,.2,1),
+    margin-left .35s cubic-bezier(.4,0,.2,1),
+    width .35s cubic-bezier(.4,0,.2,1),
+    height .35s cubic-bezier(.4,0,.2,1),
+    padding .35s ease,
+    border-radius .25s ease,
+    border-color .2s, box-shadow .2s;
+
+  /* Home (default) — full-width bar centered under the TopBar */
+  top: calc(var(--topbar-h) + 8px);
+  left: 50%;
+  margin-left: -430px;
+  width: 860px;
+  max-width: calc(100vw - 4rem);
+  height: 48px;
+}
+.inner:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* Docked — every screen except Home. A small pill sitting in the TopBar,
+   between the tabs and the theme toggle, permanently at rest in this
+   size — no separate collapsed-to-icon state, always ready to type into. */
+.wrap.docked .inner {
+  top: calc((var(--topbar-h) - 36px) / 2);
+  left: 100%;
+  margin-left: -360px;   /* 200px wide + 160px reserved for the theme toggle/edge */
+  width: 200px;          /* was 300 — overlapped the "Downloads" tab, since
+                             .nav is centered independently of this
+                             right-anchored pill and the two can collide */
+  height: 36px;
+  border-radius: 10px;
+}
+
+.icon { font-size: 1.2rem; color: var(--text-muted); flex: none; user-select: none; }
+
+.input {
+  flex: 1; background: none; border: none; outline: none;
+  color: var(--text); font-family: var(--font-ui); font-size: 0.95rem;
+  padding: 11px 0; caret-color: var(--accent);
+  min-width: 0;
+}
+.input::placeholder { color: var(--text-muted); }
+
+.clearBtn {
+  background: none; border: none; color: var(--text-dim);
+  cursor: pointer; font-size: 0.75rem; padding: 4px 6px;
+  border-radius: 4px; pointer-events: all;
+  transition: color .15s;
+}
+.clearBtn:hover { color: var(--text); }
+
+/* Results dropdown */
+.results {
+  pointer-events: all;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%; transform: translateX(-50%);
+  width: 100%; max-width: 860px;
+  background: var(--surface);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 16px 48px rgba(0,0,0,.6);
+  max-height: 460px; overflow-y: auto;
+}
+/* Docked: anchor the dropdown to the pill's right edge instead of
+   centering it — centering a 340px dropdown under a 40-300px pill would
+   put most of it off to one side anyway. */
+.dockedResults {
+  left: auto; right: 0; transform: none;
+  width: 340px; max-width: 340px;
+}
+
+.noResults {
+  padding: 20px; text-align: center;
+  font-family: var(--font-mono); font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.groupLabel {
+  font-family: var(--font-mono); font-size: 0.6rem;
+  text-transform: uppercase; letter-spacing: 0.18em;
+  color: var(--text-dim); padding: 10px 16px 6px;
+  border-top: 1px solid var(--border);
+}
+.groupLabel:first-child { border-top: none; }
+
+.item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; cursor: pointer;
+  transition: background .12s; text-decoration: none; color: inherit;
+}
+.item:hover { background: var(--surface2); }
+
+.itemImg { width: 30px; height: 30px; object-fit: contain; border-radius: 6px; flex: none; }
+.itemInfo { display: flex; flex-direction: column; flex: 1; gap: 1px; }
+.itemName { font-size: 0.88rem; font-weight: 600; color: var(--text); }
+.itemMeta { font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-muted); }
+
+.badge {
+  font-family: var(--font-mono); font-size: 0.58rem;
+  padding: 2px 7px; border-radius: 4px; flex: none;
+}
+.badgeWeb    { background: rgba(79,255,176,.1);  color: var(--accent);  border: 1px solid rgba(79,255,176,.2); }
+.badgeApp    { background: rgba(0,201,255,.1);   color: var(--accent2); border: 1px solid rgba(0,201,255,.2); }
+.badgeScript { background: rgba(168,85,247,.1);  color: #c084fc;        border: 1px solid rgba(168,85,247,.3); }
+
+/* ── Keyboard navigation ────────────────────────────── */
+.itemSelected {
+  background: var(--surface2) !important;
+  outline: 1px solid var(--border2);
+}
+.itemSelected .itemName { color: var(--accent); }
+
+.enterBadge {
+  font-family: var(--font-mono); font-size: 0.55rem;
+  padding: 2px 6px; border-radius: 4px;
+  background: rgba(79,255,176,.12); color: var(--accent);
+  border: 1px solid rgba(79,255,176,.3);
+  white-space: nowrap; flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.hint {
+  padding: 6px 16px;
+  font-family: var(--font-mono); font-size: 0.58rem;
+  color: var(--text-dim); border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+/* Downloads badge */
+.badgeDownload { background: rgba(251,191,36,.1); color: #fbbf24; border: 1px solid rgba(251,191,36,.3); }
+
+/* Placeholder for download items that have no image */
+.itemImgPlaceholder {
+  width: 30px; height: 30px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-dim);
+}

@@ -1,0 +1,29 @@
+/* Snap-scroll container — sits below the topbar. Used to also reserve
+   space for the search bar (--search-h), back when it was always a
+   full-height bar under the topbar on every page. Now it's docked inside
+   the topbar itself on every screen except Home (where it floats via
+   position:fixed, not in normal flow), so no extra space needs
+   reserving here — doing so left a dead empty gap under the topbar. */
+.snapContainer {
+  position: fixed;
+  top: var(--topbar-h);
+  left: 0; right: 0;
+  bottom: 0;
+  overflow-y: scroll;
+  /* mandatory = browser handles all snapping natively, smooth and fast */
+  scroll-snap-type: y mandatory;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  z-index: 10;
+}
+.snapContainer::-webkit-scrollbar { display: none; }
+
+/* Each tab is exactly one viewport section */
+.snapSection {
+  scroll-snap-align: start;
+  height: calc(100vh - var(--topbar-h));
+  overflow: visible;
+  position: relative;
+  flex-shrink: 0;
+}

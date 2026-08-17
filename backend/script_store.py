@@ -127,9 +127,10 @@ def _parse_script_yaml(raw: str, team: str, script_name: str, script_path: str, 
         if not isinstance(arg, dict):
             continue
         arg_type = arg.get("type", "string").lower()
-        # js_file — a .js file uploaded through the RunModal (see
-        # arg_file_store.py). The manifest only ever declares the type;
-        # the actual file is supplied per-run, not stored in GitLab.
+        # js_file — a .js file uploaded through the RunModal, converted to
+        # oneline-base64 by POST /api/scripts/upload-arg-file and passed
+        # straight through as the argument's value. The manifest only
+        # declares the type; nothing about the actual file is stored here.
         if arg_type not in ("string", "integer", "boolean", "select", "js_file"):
             logger.warning("Unknown arg type '%s' for arg '%s' — defaulting to string",
                            arg_type, arg.get("name", ""))

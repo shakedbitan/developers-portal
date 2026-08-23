@@ -78,12 +78,18 @@
 
 .categoryGrid {
   display: grid;
-  /* auto-fill so the grid actually fills the available width with as many
-     columns as fit, instead of a fixed count stuck in a centered strip. */
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  /* auto-fit, not auto-fill: auto-fill still reserves empty tracks when
+     there aren't enough cards to fill a row (e.g. 7 cards on a screen wide
+     enough for 8), leaving a blank gap instead of letting the real cards
+     stretch. auto-fit collapses those empty tracks so the 1fr cards actually
+     expand to fill the row. */
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
 }
 
+/* Card hugs exactly its content -- the 16:9 picture plus the description
+   below it -- no fixed/minimum height, so there's never extra empty space
+   past what the image and text actually need. */
 .categoryCard {
   position: relative;
   display: flex;
@@ -96,59 +102,50 @@
   color: inherit;
   text-align: left;
   cursor: pointer;
-  backdrop-filter: blur(8px);
-  transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s, background 0.18s;
-}
-
-.categoryCard::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, var(--accent-glow), transparent 65%);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.18s;
+  /* This is a <button> -- browsers apply their own default button chrome
+     (gray fill, outset border) unless it's explicitly zeroed out first,
+     before the real card styling above takes over. */
+  font: inherit;
+  transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
 }
 
 .categoryCard:hover,
-.categoryCard:focus-visible,
-.categoryCardActive {
+.categoryCard:focus-visible {
   transform: translateY(var(--card-lift, -3px));
-  border-color: var(--border2);
-  background: color-mix(in srgb, var(--surface) 90%, var(--accent-glow));
+  border-color: var(--accent);
   box-shadow: var(--card-shadow-hover, 0 12px 32px rgba(0, 0, 0, 0.3));
   outline: none;
 }
 
 .categoryCard:focus-visible { box-shadow: var(--card-focus-ring, 0 0 0 3px var(--accent-glow)); }
-.categoryCard:hover::before,
-.categoryCardActive::before { opacity: 1; }
 .categoryCardActive { border-color: var(--accent); }
 
 /* Picture — a real image slot, not a text/code chip. Drop files into
-   frontend/public/category-images/<slug>.svg to fill these in; falls back
-   to the generic placeholder until then. */
+   frontend/public/category-images/<slug>.png to fill these in; falls back
+   to the generic placeholder until then. Fixed 16:9 aspect-ratio matches
+   the source images (all 1920x1080), so `cover` never crops or letterboxes
+   -- it just renders the image edge-to-edge, flush with the card's own
+   top corners (clipped by the card's own overflow:hidden above). */
 .categoryPic {
   position: relative;
-  height: 108px;
+  aspect-ratio: 16 / 9;
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: color-mix(in srgb, var(--surface2) 65%, transparent);
-  border-bottom: 1px solid var(--border);
   overflow: hidden;
 }
 
 .categoryPic img {
-  width: 52px;
-  height: 52px;
-  object-fit: contain;
-  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, .5));
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  /* Slightly zoomed in even at rest (not just on hover) -- `cover` alone
+     renders the image at exactly 1:1 since it already matches the box's
+     16:9 aspect ratio, which read as too flat/static. */
+  transform: scale(1.08);
   transition: transform 0.2s ease;
 }
 
-.categoryCard:hover .categoryPic img { transform: scale(1.08); }
+.categoryCard:hover .categoryPic img { transform: scale(1.16); }
 
 .categoryCopy {
   position: relative;
@@ -156,7 +153,7 @@
   flex: 1;
   flex-direction: column;
   gap: 5px;
-  padding: 14px 17px 17px;
+  padding: 14px 16px 16px;
 }
 
 .categoryName {
@@ -184,21 +181,6 @@
   font-family: var(--font-mono);
   font-size: 0.58rem;
   backdrop-filter: blur(4px);
-}
-
-.categoryArrow {
-  position: absolute;
-  right: 16px;
-  bottom: 15px;
-  color: var(--text-dim);
-  font-size: 0.9rem;
-  transition: color 0.15s, transform 0.15s;
-}
-
-.categoryCard:hover .categoryArrow,
-.categoryCardActive .categoryArrow {
-  color: var(--accent);
-  transform: translateX(3px);
 }
 
 .resultsSection {
@@ -463,7 +445,8 @@
 @media (prefers-reduced-motion: reduce) {
   .page { scroll-behavior: auto; }
   .categoryCard,
-  .categoryArrow { transition: none; }
+  .categoryPic,
+  .categoryPic img { transition: none; }
   .skeleton,
   .spinner { animation-duration: 2.5s; }
 }

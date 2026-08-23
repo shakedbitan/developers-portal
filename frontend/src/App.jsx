@@ -18,7 +18,7 @@ const TAB_ORDER = ['/', '/apps', '/scripts', '/downloads'];
 export default function App() {
   const { user }          = useAuth();
   const { theme, toggle } = useTheme();
-  const { starredSites, starredIds, toggleStar, reorder } = useStars();
+  const { starredSites, starredIds, toggleStar, reorder, refresh: refreshStars } = useStars();
   const navigate          = useNavigate();
   const location          = useLocation();
   const scrollRef         = useRef(null);
@@ -194,6 +194,7 @@ export default function App() {
             starredIds={starredIds}
             onToggleStar={toggleStar}
             onReorder={reorder}
+            onSitesChanged={refreshStars}
             isAdmin={user?.is_admin}
           />
         </section>

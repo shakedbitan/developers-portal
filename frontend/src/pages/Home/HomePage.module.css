@@ -41,6 +41,17 @@
   flex-shrink: 0;
 }
 
+/* Tiles are only 92px wide with a 6px gap -- an expanded GroupedSiteCard's
+   env rows (which now grow past that width to fit their label, see
+   GroupedSiteCard.module.css) would otherwise get painted underneath a
+   later sibling tile, since neither has an explicit stacking order.
+   data-open is a plain attribute (not CSS-module-hashed), set by
+   GroupedSiteCard itself, so this can select across the module boundary. */
+.grid > div:has([data-open="true"]) {
+  position: relative;
+  z-index: 50;
+}
+
 .empty {
   text-align: center;
   font-family: var(--font-mono); font-size: 0.75rem;

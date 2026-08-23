@@ -7,12 +7,20 @@
 }
 
 /* ── Environment rows — same neutral tile language as the icon tiles,
-   no blur box and no blue accent border (matches SiteCard). Framed in
-   the env's own color (set inline via style.borderColor from JSX,
-   falling back to transparent when no color is picked). ── */
+   no blur box (matches SiteCard). The per-env color lives on the bullet
+   only now, not the frame; the frame stays plain and only appears (in the
+   theme accent color, not the per-env one) on hover. ── */
 .envRow {
   position: absolute;
-  left: 0; width: 100%;
+  /* Centered, content-sized growth instead of pinned to the tile's own
+     92px width -- left:50% + translateX(-50%) keeps the row centered on
+     the tile as it grows in both directions to fit the widest label,
+     rather than being clipped/ellipsized inside a fixed narrow box. */
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  min-width: 100%;
+  max-width: 260px;
   height: 38px;
   background: var(--tile-bg);
   border: 2px solid transparent;
@@ -29,6 +37,7 @@
 }
 .envRow:hover {
   background: var(--tile-bg-hover);
+  border-color: var(--accent);
 }
 .envBullet {
   width: 8px; height: 8px;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import styles from './GroupedSiteCard.module.css';
 
 const CARD_H = 124; // main card height px — must match CSS, and must equal
@@ -19,7 +19,9 @@ const GAP    = 14;  // gap between rows, and between the card and the first row
  *   members      — array of { id, url, env_label, image_url, env_color }
  *                  env_color is a resolved hex string (or undefined) —
  *                  picked in the Submit/Edit Web App modal, used here as
- *                  the bullet color and the row's frame color.
+ *                  the bullet color only. The row's frame is plain until
+ *                  hovered, then goes to the theme accent color (not the
+ *                  per-env color) -- see .envRow:hover in the CSS.
  *   small        — boolean (home screen small variant)
  */
 export function GroupedSiteCard({ displayName, imageUrl, members, small = false }) {
@@ -35,6 +37,29 @@ export function GroupedSiteCard({ displayName, imageUrl, members, small = false 
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
+
+  // All env rows share one width -- the widest label's natural (max-content)
+  // width -- rather than each sizing independently. CSS alone can't express
+  // "size every row to the widest sibling" here: they're position:absolute
+  // (required for the stacked staggered-reveal animation), which excludes
+  // them from a shared grid track's auto-sizing. So it's measured in JS
+  // instead: rowWidth resets to null whenever the member set changes,
+  // which lets that render fall back to each row's own CSS max-content
+  // width; a layout effect then reads the actual rendered widths and locks
+  // them all to the max, before the browser paints (no visible resize flash).
+  const rowRefs   = useRef([]);
+  const [rowWidth, setRowWidth] = useState(null);
+  const membersKey = members.map(m => m.id).join(',');
+
+  useLayoutEffect(() => {
+    setRowWidth(null);
+  }, [membersKey]);
+
+  useLayoutEffect(() => {
+    if (rowWidth !== null) return;
+    const widths = rowRefs.current.filter(Boolean).map(el => el.getBoundingClientRect().width);
+    if (widths.length > 0) setRowWidth(Math.ceil(Math.max(...widths)));
+  }, [rowWidth, membersKey]);
 
   const count       = members.length;
   const expandedH   = CARD_H + (ROW_H + GAP) * count + GAP;
@@ -56,6 +81,10 @@ export function GroupedSiteCard({ displayName, imageUrl, members, small = false 
       ref={wrapRef}
       className={`${styles.wrap} ${small ? styles.small : ''} ${open ? styles.open : ''}`}
       style={wrapStyle}
+      // Plain data attribute (not CSS-module-hashed) so HomePage.module.css
+      // can select on it across the module boundary to lift this tile's
+      // z-index above its neighbors while expanded -- see .grid > div:has(...).
+      data-open={open}
     >
       {/* Environment rows — spread upward when open */}
       {members.map((member, i) => {
@@ -68,6 +97,7 @@ export function GroupedSiteCard({ displayName, imageUrl, members, small = false 
         return (
           <a
             key={member.id}
+            ref={el => { rowRefs.current[i] = el; }}
             href={member.url}
             className={styles.envRow}
             data-no-dnd="true"
@@ -77,7 +107,7 @@ export function GroupedSiteCard({ displayName, imageUrl, members, small = false 
               zIndex:     count - i,
               transitionDelay: `${delay}ms`,
               pointerEvents: open ? 'all' : 'none',
-              borderColor: member.env_color || 'transparent',
+              width: rowWidth != null ? `${rowWidth}px` : undefined,
             }}
             onClick={e => e.stopPropagation()}
           >

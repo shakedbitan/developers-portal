@@ -88,6 +88,22 @@ def _unreachable_response(url: str, error: Exception) -> requests.Response:
     return resp
 
 
+def _error_message(resp: requests.Response) -> str:
+    """
+    Best-effort error message from a failed response. GitLab's own error
+    responses are JSON ({"message": "..."}), but the synthetic response
+    _unreachable_response() returns when GitLab can't be reached at all is
+    plain text -- calling resp.json() on that raised a JSONDecodeError that
+    crashed the request instead of surfacing "GitLab unreachable: ..." to
+    the user (found via the script-args-upload path, which reaches this on
+    every create_script_mr failure branch).
+    """
+    try:
+        return resp.json().get("message", resp.text[:200])
+    except ValueError:
+        return resp.text[:200]
+
+
 def _get(url: str, **kwargs) -> requests.Response:
     logger.debug("GitLab GET %s", url)
     try:
@@ -239,7 +255,7 @@ def create_script_mr(
     })
     if resp.status_code not in (200, 201):
         logger.error("Failed to create branch %s: %d %s", branch, resp.status_code, resp.text[:300])
-        return {"error": f"Failed to create branch: {resp.json().get('message', resp.text[:100])}"}
+        return {"error": f"Failed to create branch: {_error_message(resp)}"}
 
     # 2. Build commit actions
     actions = [
@@ -270,7 +286,7 @@ def create_script_mr(
     })
     if resp.status_code not in (200, 201):
         logger.error("Failed to commit files: %d %s", resp.status_code, resp.text[:300])
-        return {"error": f"Failed to commit files: {resp.json().get('message', resp.text[:100])}"}
+        return {"error": f"Failed to commit files: {_error_message(resp)}"}
 
     logger.info("Committed %d files to branch %s", len(actions), branch)
 
@@ -292,11 +308,18 @@ def create_script_mr(
     })
     if resp.status_code not in (200, 201):
         logger.error("Failed to open MR: %d %s", resp.status_code, resp.text[:300])
-        return {"error": f"Failed to open MR: {resp.json().get('message', resp.text[:100])}"}
+        return {"error": f"Failed to open MR: {_error_message(resp)}"}
 
-    mr_url = resp.json().get("web_url", "")
-    logger.info("MR opened: %s", mr_url)
-    return {"mr_url": mr_url, "branch": branch}
+    mr_data = resp.json()
+    mr_url  = mr_data.get("web_url", "")
+    mr_iid  = mr_data.get("iid")
+    logger.info("MR opened: %s (iid=%s)", mr_url, mr_iid)
+    # api_scripts_upload does result.get("iid") -- this dict never had that
+    # key at all, so it always fell through to its "or 0" default, and every
+    # submission got stored with mr_iid=0 instead of the real MR number
+    # (which merge_mr(), used by the approve-MR admin action, needs to
+    # actually merge the right merge request).
+    return {"mr_url": mr_url, "iid": mr_iid, "branch": branch}
 
 
 def merge_mr(mr_iid: int) -> dict:

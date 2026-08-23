@@ -158,6 +158,15 @@ def _resolve_site_image(name: str, favicon_url: str = "") -> str:
 
 _LOCAL_SITES_FILE = os.path.join(_BASE_DIR, "..", "sites.json")
 
+# DEV-ONLY in-memory overrides for editing local-fallback sites. Mirrors
+# _local_stars below: without this, /api/sites/edit always fails with
+# "couldn't save" when running against sites.json (no real Postgres) --
+# correct for a real deployment (its DB is always up), but it means an
+# admin-edit flow like changing a site's env_color can never actually be
+# exercised locally. Resets on every backend restart.
+_local_site_overrides_lock = threading.Lock()
+_local_site_overrides: dict = {}  # site_id (int) -> dict of overridden fields
+
 
 def _load_local_sites_fallback() -> list:
     """
@@ -171,8 +180,9 @@ def _load_local_sites_fallback() -> list:
             raw = json.load(f)
         sites = []
         for i, s in enumerate(raw):
-            sites.append({
-                "id": f"local-{i}",
+            site_id = 900000 + i  # real int, not "local-N" -- see edit_local_site below
+            site = {
+                "id": site_id,
                 "name": s.get("name", ""),
                 "url": s.get("url", ""),
                 "favicon_url": s.get("favicon_url", ""),
@@ -181,13 +191,27 @@ def _load_local_sites_fallback() -> list:
                 "group_display_name": s.get("group_display_name"),
                 "env_label": s.get("env_label"),
                 "env_color": s.get("env_color"),
-            })
+            }
+            with _local_site_overrides_lock:
+                site.update(_local_site_overrides.get(site_id, {}))
+            sites.append(site)
         logger.warning("Database has no sites -- serving %d hardcoded sites from %s",
                         len(sites), _LOCAL_SITES_FILE)
         return sites
     except Exception as e:
         logger.error("Failed to load local sites fallback: %s", e)
         return []
+
+
+def _edit_local_site(site_id: int, **fields) -> bool:
+    if site_id not in {s["id"] for s in _load_local_sites_fallback()}:
+        return False
+    with _local_site_overrides_lock:
+        existing = _local_site_overrides.setdefault(site_id, {})
+        for key, value in fields.items():
+            if value is not None:
+                existing[key] = value
+    return True
 
 
 def _load_sites() -> list:
@@ -416,6 +440,53 @@ def api_scripts_reload():
     return jsonify({"status": "reload started"}), 202
 
 
+# DEV-ONLY in-memory store for pending run approvals, mirroring
+# _local_site_overrides above. In practice this rarely populates locally --
+# Argo isn't reachable in dev (ARGO_URL defaults to a placeholder), so the
+# submit call below fails before a record would ever be created -- but it
+# keeps the shape consistent with db.py's real functions and lets the
+# review/approve/reject UI be exercised against manually-seeded rows.
+# Resets on every backend restart.
+_local_run_approvals_lock = threading.Lock()
+_local_run_approvals: list = []
+_local_run_approval_next_id = 0
+
+
+def _create_local_run_approval(team, script_name, args, workflow_name, namespace, submitted_by) -> dict:
+    global _local_run_approval_next_id
+    with _local_run_approvals_lock:
+        _local_run_approval_next_id += 1
+        _local_run_approvals.append({
+            "id": _local_run_approval_next_id,
+            "team": team,
+            "script_name": script_name,
+            "args": dict(args),
+            "workflow_name": workflow_name,
+            "namespace": namespace,
+            "submitted_by": submitted_by,
+            "status": "pending",
+        })
+        return {"id": _local_run_approval_next_id}
+
+
+def _get_local_pending_run_approvals() -> list:
+    with _local_run_approvals_lock:
+        return [dict(r) for r in _local_run_approvals if r["status"] == "pending"]
+
+
+def _update_local_run_approval_status(approval_id: int, status: str, reviewed_by: str,
+                                       final_args: dict | None = None) -> bool:
+    with _local_run_approvals_lock:
+        for r in _local_run_approvals:
+            if r["id"] == approval_id:
+                r["status"] = status
+                r["reviewed_by"] = reviewed_by
+                if final_args is not None:
+                    r["args"] = dict(final_args)
+                return True
+    return False
+
+
 @app.route("/api/scripts/submit", methods=["POST"])
 def api_scripts_submit():
     data = request.get_json(silent=True) or {}
@@ -460,6 +531,7 @@ def api_scripts_submit():
     # exactly like every other arg type. Nothing is stored/referenced
     # server-side at any point.
 
+    approval_required = script_def.get("approval_required", True)
     result = argo_client.submit_workflow(
         team=team,
         script_name=script_name,
@@ -467,9 +539,29 @@ def api_scripts_submit():
         script_path=script_def["path"],
         user_args=user_args,
         dependencies=script_def.get("dependencies", []),
-        approval_required=script_def.get("approval_required", True),
+        approval_required=approval_required,
         resources=script_def.get("resources", {}),
     )
+
+    # Runs that need approval are left suspended in Argo -- track them so
+    # they can be reviewed (and their args edited) through Eden's own UI
+    # instead of only through Argo's. Only recorded on a successful submit;
+    # if Argo itself rejected the submission there's no workflow to approve.
+    if approval_required and "error" not in result:
+        submitted_by = auth.get_current_username()
+        if db.is_available():
+            db.create_run_approval(
+                team=team, script_name=script_name, args=user_args,
+                workflow_name=result["workflow_name"], namespace=result["namespace"],
+                submitted_by=submitted_by,
+            )
+        else:
+            _create_local_run_approval(
+                team=team, script_name=script_name, args=user_args,
+                workflow_name=result["workflow_name"], namespace=result["namespace"],
+                submitted_by=submitted_by,
+            )
+
     return jsonify(result), (200 if "error" not in result else 502)
 
 
@@ -823,9 +915,14 @@ def api_sites_edit():
     if favicon_data and favicon_data.startswith("data:image/"):
         favicon_url = favicon_data
 
-    ok = db.edit_site(int(site_id), name=name, url=url, tags=tags, favicon_url=favicon_url,
-                      group_name=group_name, group_display_name=group_display_name,
-                      env_label=env_label, env_color=env_color)
+    if db.is_available():
+        ok = db.edit_site(int(site_id), name=name, url=url, tags=tags, favicon_url=favicon_url,
+                          group_name=group_name, group_display_name=group_display_name,
+                          env_label=env_label, env_color=env_color)
+    else:
+        ok = _edit_local_site(int(site_id), name=name, url=url, tags=tags, favicon_url=favicon_url,
+                              group_name=group_name, group_display_name=group_display_name,
+                              env_label=env_label, env_color=env_color)
     logger.info("Site %d edited by %s", site_id, auth.get_current_username())
     return jsonify({"status": "updated" if ok else "error"}), (200 if ok else 502)
 
@@ -877,6 +974,115 @@ def api_scripts_reject():
     if not sub_id:
         return jsonify({"error": "Missing id"}), 400
     db.update_script_submission_status(int(sub_id), "rejected")
+    return jsonify({"status": "rejected"}), 200
+
+
+# ── Script RUN approval (distinct from MR approval above -- this is a
+#    submitted run's arguments awaiting review before Argo executes it,
+#    not a script's code awaiting merge) ───────────────────────────────────────
+
+def _get_pending_run_approvals_raw() -> list:
+    return db.get_pending_run_approvals() if db.is_available() else _get_local_pending_run_approvals()
+
+
+def _update_run_approval_status(approval_id: int, status: str, reviewed_by: str,
+                                 final_args: dict | None = None) -> bool:
+    if db.is_available():
+        return db.update_run_approval_status(approval_id, status, reviewed_by, final_args)
+    return _update_local_run_approval_status(approval_id, status, reviewed_by, final_args)
+
+
+@app.route("/api/scripts/runs/pending")
+def api_scripts_runs_pending():
+    """
+    List runs waiting on approval. Reconciles each against Argo's live
+    status first -- a workflow can just as easily have been resumed
+    directly through Argo's own UI (see the approval-feature discussion:
+    admins have Argo access too), and a stale "pending" row here would be
+    actively misleading rather than just outdated.
+    """
+    if not auth.is_admin():
+        return jsonify({"error": "Admin access required"}), 403
+
+    pending = _get_pending_run_approvals_raw()
+    still_pending = []
+    for item in pending:
+        live = argo_client.get_workflow_status(item["namespace"], item["workflow_name"])
+        if live is not None and live.get("approval_phase") not in (None, "Running", "Pending"):
+            # Resolved outside Eden -- reflect the real outcome instead of
+            # leaving a stale "pending" row for something already handled.
+            resolved_approve = (live.get("approval_outputs") or {}).get("approve")
+            resolved_status = (
+                "approved" if resolved_approve == "YES"
+                else "rejected" if resolved_approve == "NO"
+                else item["status"]
+            )
+            _update_run_approval_status(item["id"], resolved_status, reviewed_by=None)
+            continue
+
+        # Pair the submitted values with the script's current arg
+        # definitions (type, required, options, ...) so the review UI can
+        # render proper type-aware editable fields instead of raw text.
+        script_def = script_store.get_script(item["team"], item["script_name"])
+        item["arg_defs"] = script_def.get("args", []) if script_def else []
+        still_pending.append(item)
+
+    return jsonify(still_pending)
+
+
+@app.route("/api/scripts/runs/approve", methods=["POST"])
+def api_scripts_runs_approve():
+    """Approve a pending run -- resumes the Argo workflow with approve=YES,
+    relaying whatever args the admin ends up submitting (edited or not)."""
+    if not auth.is_admin():
+        return jsonify({"error": "Admin access required"}), 403
+    data = request.get_json(silent=True) or {}
+    approval_id = data.get("id")
+    edited_args = data.get("args")
+    if not approval_id or edited_args is None:
+        return jsonify({"error": "Missing id or args"}), 400
+    approval_id = int(approval_id)
+
+    item = next((p for p in _get_pending_run_approvals_raw() if p["id"] == approval_id), None)
+    if not item:
+        return jsonify({"error": "Approval request not found"}), 404
+
+    result = argo_client.resume_workflow(item["namespace"], item["workflow_name"], "YES", edited_args)
+    if "error" in result:
+        return jsonify(result), 502
+
+    reviewer = auth.get_current_username()
+    _update_run_approval_status(approval_id, "approved", reviewer, final_args=edited_args)
+    logger.info("Run approval %d (%s/%s) approved by %s",
+                approval_id, item["team"], item["script_name"], reviewer)
+    return jsonify({"status": "approved"}), 200
+
+
+@app.route("/api/scripts/runs/reject", methods=["POST"])
+def api_scripts_runs_reject():
+    """Reject a pending run -- resumes the Argo workflow with approve=NO,
+    which the template's own `when` condition already treats as "skip the
+    run", so no other special-casing is needed here."""
+    if not auth.is_admin():
+        return jsonify({"error": "Admin access required"}), 403
+    data = request.get_json(silent=True) or {}
+    approval_id = data.get("id")
+    if not approval_id:
+        return jsonify({"error": "Missing id"}), 400
+    approval_id = int(approval_id)
+
+    item = next((p for p in _get_pending_run_approvals_raw() if p["id"] == approval_id), None)
+    if not item:
+        return jsonify({"error": "Approval request not found"}), 404
+
+    result = argo_client.resume_workflow(item["namespace"], item["workflow_name"], "NO", item["args"])
+    if "error" in result:
+        return jsonify(result), 502
+
+    reviewer = auth.get_current_username()
+    _update_run_approval_status(approval_id, "rejected", reviewer)
+    logger.info("Run approval %d (%s/%s) rejected by %s",
+                approval_id, item["team"], item["script_name"], reviewer)
     return jsonify({"status": "rejected"}), 200
 
 
@@ -940,7 +1146,7 @@ def _get_local_stars(username: str) -> list:
     return [dict(by_id[i]) for i in ids if i in by_id]
 
 
-def _add_local_star(username: str, site_id: str) -> bool:
+def _add_local_star(username: str, site_id: int) -> bool:
     if site_id not in _local_sites_by_id():
         return False
     with _local_stars_lock:
@@ -950,7 +1156,7 @@ def _add_local_star(username: str, site_id: str) -> bool:
     return True
 
 
-def _remove_local_star(username: str, site_id: str) -> bool:
+def _remove_local_star(username: str, site_id: int) -> bool:
     with _local_stars_lock:
         ids = _local_stars.get(username, [])
         if site_id in ids:
@@ -958,7 +1164,7 @@ def _remove_local_star(username: str, site_id: str) -> bool:
     return True
 
 
-def _reorder_local_stars(username: str, ordered_ids: list) -> bool:
+def _reorder_local_stars(username: str, ordered_ids: "list[int]") -> bool:
     with _local_stars_lock:
         _local_stars[username] = list(ordered_ids)
     return True
@@ -990,7 +1196,11 @@ def api_stars_add():
     if db.is_available():
         ok = db.star_site(username, int(site_id))
     else:
-        ok = _add_local_star(username, str(site_id))
+        # Fallback site ids are real ints now (900000+i, see
+        # _load_local_sites_fallback) -- this used to coerce to str(),
+        # which silently failed every star-add once the ids stopped being
+        # "local-N" strings, since the lookup dict is keyed by int.
+        ok = _add_local_star(username, int(site_id))
     return jsonify({"status": "starred" if ok else "error"}), (200 if ok else 502)
 
 
@@ -1004,7 +1214,7 @@ def api_stars_remove():
     if db.is_available():
         ok = db.unstar_site(username, int(site_id))
     else:
-        ok = _remove_local_star(username, str(site_id))
+        ok = _remove_local_star(username, int(site_id))
     return jsonify({"status": "unstarred" if ok else "error"}), (200 if ok else 502)
 
 
@@ -1018,7 +1228,7 @@ def api_stars_reorder():
     if db.is_available():
         ok = db.reorder_stars(username, [int(i) for i in ids])
     else:
-        ok = _reorder_local_stars(username, [str(i) for i in ids])
+        ok = _reorder_local_stars(username, [int(i) for i in ids])
     return jsonify({"status": "reordered" if ok else "error"}), (200 if ok else 502)
 
 

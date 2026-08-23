@@ -41,7 +41,7 @@ function SortableCard({ site, isStarred, onToggleStar, isAdmin, onEdit, onDelete
 const COLOURS = ['#4fffb0','#00c9ff','#f59e0b','#a78bfa','#f472b6','#34d399','#fb923c'];
 const tagColor = tag => COLOURS[[...tag].reduce((a,c) => a + c.charCodeAt(0), 0) % COLOURS.length];
 
-export function WebAppsPage({ sites, setSites, starredSites, starredIds, onToggleStar, onReorder, isAdmin, cardRefs }) {
+export function WebAppsPage({ sites, setSites, starredSites, starredIds, onToggleStar, onReorder, onSitesChanged, isAdmin, cardRefs }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   // ── Fetch banner / env-color options ────────────────────────────────────
@@ -178,6 +178,12 @@ export function WebAppsPage({ sites, setSites, starredSites, starredIds, onToggl
       setEditOpen(false);
       const fresh = await fetchSites();
       setSites(fresh);
+      // starredSites (what Home's GroupedSiteCard actually renders from) is
+      // separate state owned by useStars() -- refreshing `sites` here never
+      // touched it, so an edited starred site kept showing its old env_color
+      // (or group/label/etc.) in the expanded card, and reopening Edit on it
+      // read that same stale object straight back into the form.
+      onSitesChanged?.();
     } catch (e) { toast.error(e.message); }
     finally { setEditLoading(false); }
   };
@@ -188,6 +194,8 @@ export function WebAppsPage({ sites, setSites, starredSites, starredIds, onToggl
     try {
       await deleteSite(deleteTarget.id);
       setSites(prev => prev.filter(s => s.id !== deleteTarget.id));
+      onSitesChanged?.(); // same staleness issue as handleEdit -- deleting a
+                          // starred site would otherwise leave a ghost card on Home
       toast.success(`Deleted: ${deleteTarget.name}`);
     } catch (e) { toast.error(e.message); }
     finally { setDeleteTarget(null); }

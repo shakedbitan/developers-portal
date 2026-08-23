@@ -1278,7 +1278,7 @@ class CatalogRepository:
         page_where_sql = " AND ".join(page_parts)
         count_sql = f"""
             {search_cte}
-            SELECT COUNT(*)
+            SELECT COUNT(*) AS total_items
             FROM download_items i{from_suffix}
             WHERE {filter_sql}
         """
@@ -1320,7 +1320,10 @@ class CatalogRepository:
         with self._connections() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(count_sql, count_values)
-                total_items = int(cur.fetchone()[0])
+                count_row = cur.fetchone()
+                if count_row is None:
+                    raise CatalogError("Download catalog count query returned no result")
+                total_items = int(count_row["total_items"])
                 cur.execute(page_sql, result_values + [limit + 1, offset])
                 rows = [dict(row) for row in cur.fetchall()]
                 has_more = len(rows) > limit

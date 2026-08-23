@@ -201,6 +201,26 @@ def init_schema():
         status       TEXT DEFAULT 'pending'
     );
 
+    -- Script *runs* that require approval before Argo actually executes
+    -- them (distinct from script_submissions above, which is code/MR
+    -- review -- this is runtime-argument review for an already-approved
+    -- script). One row per Argo workflow left suspended at its `approval`
+    -- node; args is the submitter's values, editable by the approver
+    -- before it's relayed back to Argo's resume call.
+    CREATE TABLE IF NOT EXISTS script_run_approvals (
+        id            SERIAL PRIMARY KEY,
+        team          TEXT NOT NULL,
+        script_name   TEXT NOT NULL,
+        args          JSONB NOT NULL DEFAULT '{}',
+        workflow_name TEXT NOT NULL,
+        namespace     TEXT NOT NULL,
+        submitted_by  TEXT,
+        submitted_at  TIMESTAMP DEFAULT NOW(),
+        status        TEXT DEFAULT 'pending',
+        reviewed_by   TEXT,
+        reviewed_at   TIMESTAMP
+    );
+
     ALTER TABLE user_stars ADD COLUMN IF NOT EXISTS site_id INTEGER;
     """
     try:
@@ -263,6 +283,11 @@ def delete_site(site_id: int) -> bool:
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM sites WHERE id = %s", (site_id,))
+                # Same silent-no-op risk as edit_site: a DELETE matching zero
+                # rows doesn't raise either.
+                if cur.rowcount == 0:
+                    logger.error("delete_site: no row matched id=%s -- nothing was deleted", site_id)
+                    return False
         return True
     except Exception as e:
         logger.error("delete_site failed: %s", e)
@@ -291,6 +316,14 @@ def edit_site(site_id: int, name: str = None, url: str = None,
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(f"UPDATE sites SET {', '.join(sets)} WHERE id = %s", vals)
+                # Postgres doesn't error on an UPDATE that matches zero rows --
+                # it just succeeds with rowcount 0. Without this check, a
+                # stale/wrong site_id (or a row that no longer exists) made
+                # this return True unconditionally: no exception, no log,
+                # nothing written, and the API reported "updated" anyway.
+                if cur.rowcount == 0:
+                    logger.error("edit_site: no row matched id=%s -- nothing was written", site_id)
+                    return False
         return True
     except Exception as e:
         logger.error("edit_site failed: %s", e)
@@ -492,9 +525,79 @@ def update_script_submission_status(submission_id: int, status: str) -> bool:
                     "UPDATE script_submissions SET status = %s WHERE id = %s",
                     (status, submission_id),
                 )
+                if cur.rowcount == 0:
+                    logger.error("update_script_submission_status: no row matched id=%s", submission_id)
+                    return False
         return True
     except Exception as e:
         logger.error("update_script_submission_status failed: %s", e)
+        return False
+
+
+# ── Script run approvals ────────────────────────────────────────────────────
+
+def create_run_approval(team: str, script_name: str, args: dict,
+                         workflow_name: str, namespace: str, submitted_by: str) -> dict:
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO script_run_approvals
+                       (team, script_name, args, workflow_name, namespace, submitted_by)
+                       VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
+                    (team, script_name, psycopg2.extras.Json(args),
+                     workflow_name, namespace, submitted_by),
+                )
+                return {"id": cur.fetchone()[0]}
+    except Exception as e:
+        logger.error("create_run_approval failed: %s", e)
+        return {"error": str(e)}
+
+
+def get_pending_run_approvals() -> list[dict]:
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """SELECT id, team, script_name, args, workflow_name, namespace,
+                              submitted_by, submitted_at
+                       FROM script_run_approvals WHERE status = 'pending'
+                       ORDER BY submitted_at ASC"""
+                )
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error("get_pending_run_approvals failed: %s", e)
+        return []
+
+
+def update_run_approval_status(approval_id: int, status: str, reviewed_by: str,
+                                final_args: dict | None = None) -> bool:
+    """final_args, when given, records what was actually sent to Argo on
+    approval -- may differ from the submitter's original args if an admin
+    edited a value before approving."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if final_args is not None:
+                    cur.execute(
+                        """UPDATE script_run_approvals
+                           SET status = %s, reviewed_by = %s, reviewed_at = NOW(), args = %s
+                           WHERE id = %s""",
+                        (status, reviewed_by, psycopg2.extras.Json(final_args), approval_id),
+                    )
+                else:
+                    cur.execute(
+                        """UPDATE script_run_approvals
+                           SET status = %s, reviewed_by = %s, reviewed_at = NOW()
+                           WHERE id = %s""",
+                        (status, reviewed_by, approval_id),
+                    )
+                if cur.rowcount == 0:
+                    logger.error("update_run_approval_status: no row matched id=%s", approval_id)
+                    return False
+        return True
+    except Exception as e:
+        logger.error("update_run_approval_status failed: %s", e)
         return False
 
 
@@ -558,6 +661,9 @@ def set_user_admin(username: str, is_admin: bool) -> bool:
                     "UPDATE users SET is_admin = %s WHERE username = %s",
                     (is_admin, username),
                 )
+                if cur.rowcount == 0:
+                    logger.error("set_user_admin: no user matched username=%s", username)
+                    return False
         return True
     except Exception as e:
         logger.error("set_user_admin failed: %s", e)

@@ -62,17 +62,19 @@
 }
 
 /* Name as a shell prompt */
-.prompt { font-family: var(--font-mono); font-size: 0.85rem; }
+.prompt { font-family: var(--font-mono); font-size: 1.2rem; }
 .sigil { color: var(--accent); }
-.name { color: var(--text); font-weight: 600; }
+.name { color: var(--text); font-weight: 300; }
 
-/* Cursor sits solid at rest; only blinks while the card is being engaged
-   with (hover or keyboard focus) -- a calm default, a small sign of life
-   on interaction rather than a constant distraction across a whole grid. */
+/* Cursor is fully invisible at rest; only appears (and blinks) while the
+   card is being engaged with (hover or keyboard focus) -- across a whole
+   grid of cards, a constantly-visible cursor on every one is a lot more
+   distracting than one that only wakes up on the card you're actually on. */
 .cursor {
   display: inline-block; width: 0.5em; height: 1em;
   background: var(--accent);
   vertical-align: -0.15em; margin-left: 2px;
+  opacity: 0;
 }
 .card:hover .cursor,
 .card:focus-visible .cursor {
@@ -80,7 +82,11 @@
 }
 @keyframes blink { 0%, 45% { opacity: 1; } 50%, 95% { opacity: 0; } 100% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
-  .cursor { animation: none !important; opacity: 1; }
+  /* No blink, but keep the same hidden-until-hover visibility -- forcing it
+     permanently visible here would have fought the "hidden at rest" rule
+     above for reduced-motion users specifically. */
+  .cursor { animation: none !important; }
+  .card:hover .cursor, .card:focus-visible .cursor { opacity: 1; }
 }
 
 /* Description as a comment */

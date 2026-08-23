@@ -133,3 +133,93 @@ def submit_workflow(
         "namespace": namespace,
         "argo_url": f"{config.ARGO_URL}/workflows/{namespace}/{workflow_name}",
     }
+
+
+def resume_workflow(namespace: str, workflow_name: str, approve: str, args: dict) -> dict:
+    """
+    Resume a workflow suspended at its `approval` node, supplying both
+    declared outputs (`approve` and `args`) in one call -- this is what
+    Eden's run-approval review UI calls when an admin approves/rejects a
+    pending run, in place of a person resuming it by hand in Argo's own UI.
+
+    `args` uses the same "--key value" join `submit_workflow` already sends,
+    so an approved-unedited run reaches the script with byte-identical
+    arguments to what would have been submitted directly.
+    """
+    args_parts = [f"--{k} {v}" for k, v in args.items()]
+    args_str = " ".join(args_parts)
+
+    payload = {
+        "namespace": namespace,
+        "name": workflow_name,
+        "nodeFieldSelector": "templateName=approval",
+        "parameter": [f"approve={approve}", f"args={args_str}"],
+    }
+
+    url = f"{config.ARGO_URL}/api/v1/workflows/{namespace}/{workflow_name}/resume"
+    logger.info("Resuming workflow %s/%s with approve=%s", namespace, workflow_name, approve)
+    logger.debug("Argo resume payload: %s", payload)
+
+    try:
+        resp = requests.put(
+            url,
+            headers=_headers(),
+            json=payload,
+            timeout=15,
+            verify=False,
+        )
+    except requests.exceptions.ConnectionError as e:
+        logger.error("Cannot reach Argo at %s: %s", config.ARGO_URL, e)
+        return {"error": f"Cannot reach Argo Workflows at {config.ARGO_URL}"}
+    except requests.exceptions.Timeout:
+        logger.error("Argo resume request timed out: %s", url)
+        return {"error": "Argo Workflows request timed out"}
+
+    if resp.status_code not in (200, 201):
+        msg = resp.json().get("message", resp.text[:200]) if resp.text else "Unknown error"
+        logger.error("Argo resume failed: %d %s", resp.status_code, msg)
+        return {"error": f"Argo error: {msg}"}
+
+    logger.info("Workflow %s/%s resumed (approve=%s)", namespace, workflow_name, approve)
+    return {"workflow_name": workflow_name, "namespace": namespace}
+
+
+def get_workflow_status(namespace: str, workflow_name: str) -> dict | None:
+    """
+    Fetch a workflow's current state, specifically whether its `approval`
+    node is still suspended (genuinely pending) or was already resolved --
+    including resumed directly through Argo's own UI, bypassing Eden
+    entirely. Callers use this to reconcile Eden's own "pending" records
+    against reality before showing/acting on them, since Eden isn't the
+    only thing that can resume a suspended node.
+
+    Returns None on any fetch failure (network issue, workflow deleted by
+    the podGC/ttlStrategy cleanup, etc.) -- callers should treat that as
+    "can't confirm, leave it alone" rather than assuming a particular state.
+    """
+    url = f"{config.ARGO_URL}/api/v1/workflows/{namespace}/{workflow_name}"
+    try:
+        resp = requests.get(url, headers=_headers(), timeout=10, verify=False)
+    except requests.exceptions.RequestException as e:
+        logger.warning("Failed to fetch workflow %s/%s: %s", namespace, workflow_name, e)
+        return None
+
+    if resp.status_code != 200:
+        logger.warning("Workflow %s/%s status fetch → %d", namespace, workflow_name, resp.status_code)
+        return None
+
+    data = resp.json()
+    nodes = ((data.get("status") or {}).get("nodes")) or {}
+    approval_node = next(
+        (n for n in nodes.values() if n.get("templateName") == "approval"), None
+    )
+    approval_outputs = {}
+    if approval_node:
+        for p in (approval_node.get("outputs") or {}).get("parameters", []):
+            approval_outputs[p.get("name")] = p.get("value")
+
+    return {
+        "workflow_phase": (data.get("status") or {}).get("phase"),
+        "approval_phase": approval_node.get("phase") if approval_node else None,
+        "approval_outputs": approval_outputs,
+    }

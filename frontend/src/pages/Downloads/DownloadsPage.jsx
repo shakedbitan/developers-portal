@@ -21,43 +21,43 @@ const DEFAULT_CATEGORIES = [
   {
     slug: 'development',
     label: 'Development',
-    image: '/category-images/development.svg',
+    image: '/category-images/development.png',
     description: 'Editors, runtimes, SDKs, source bundles, and developer packages.',
   },
   {
     slug: 'infrastructure',
     label: 'IT & Infrastructure',
-    image: '/category-images/infrastructure.svg',
+    image: '/category-images/infrastructure.png',
     description: 'Remote access, identity, networking, monitoring, and admin utilities.',
   },
   {
     slug: 'security',
     label: 'Security',
-    image: '/category-images/security.svg',
+    image: '/category-images/security.png',
     description: 'Endpoint protection, scanning tools, and security agents.',
   },
   {
     slug: 'data',
     label: 'Data & Databases',
-    image: '/category-images/data.svg',
+    image: '/category-images/data.png',
     description: 'Datasets, database assets, exports, and offline data packages.',
   },
   {
     slug: 'productivity',
     label: 'Productivity & Design',
-    image: '/category-images/productivity.svg',
+    image: '/category-images/productivity.png',
     description: 'Office, graphics, drawing, diagramming, media, and design software.',
   },
   {
     slug: 'utilities',
     label: 'Utilities',
-    image: '/category-images/utilities.svg',
+    image: '/category-images/utilities.png',
     description: 'General-purpose tools, compression, cleanup, and system utilities.',
   },
   {
     slug: 'drivers',
     label: 'Drivers & Firmware',
-    image: '/category-images/drivers.svg',
+    image: '/category-images/drivers.png',
     description: 'Device drivers, firmware images, and hardware support packages.',
   },
   {
@@ -573,7 +573,6 @@ export function DownloadsPage({ isAdmin = false }) {
                   {Number(category.count).toLocaleString()}
                 </span>
               )}
-              <span className={styles.categoryArrow} aria-hidden="true">→</span>
             </button>
           ))}
         </div>

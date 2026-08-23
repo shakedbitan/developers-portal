@@ -89,7 +89,11 @@ function groupStarredSites(starredSites) {
         id: site.id, url: site.url,
         env_label: site.env_label || site.name,
         image_url: site.image_url,
-        env_color: site.env_color_hex,
+        // /api/stars doesn't attach env_color_hex the way /api/sites does --
+        // only the raw value (e.g. "blue"). Falling back to it directly
+        // works because every env_color value is a real CSS color keyword,
+        // not just a lookup token.
+        env_color: site.env_color_hex || site.env_color,
       });
     } else {
       solo.push(site);

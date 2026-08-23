@@ -55,5 +55,5 @@ export function useStars() {
     }
   }, [refresh]);
 
-  return { starredSites, starredIds, toggleStar, reorder, loading };
+  return { starredSites, starredIds, toggleStar, reorder, loading, refresh };
 }

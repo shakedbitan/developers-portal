@@ -55,10 +55,12 @@
 .wrap.docked .inner {
   top: calc((var(--topbar-h) - 36px) / 2);
   left: 100%;
-  margin-left: -360px;   /* 200px wide + 160px reserved for the theme toggle/edge */
-  width: 200px;          /* was 300 — overlapped the "Downloads" tab, since
-                             .nav is centered independently of this
-                             right-anchored pill and the two can collide */
+  /* Same 110px right-side clearance the 250px version had (360 - 250 =
+     110, reserved for the theme toggle) carried forward at the new width:
+     340 + 110 = 450. Widened from 250 to 340 to match .dockedResults below
+     it, which was wider than the pill sitting above it. */
+  margin-left: -450px;
+  width: 340px;
   height: 36px;
   border-radius: 10px;
 }

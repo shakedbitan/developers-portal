@@ -7,6 +7,7 @@ import { Button }     from '../../components/Button/Button.jsx';
 import {
   submitScript, uploadScript, uploadScriptArgFile,
   fetchPendingScripts, approveScript, rejectScript,
+  fetchPendingRuns, approveRun, rejectRun,
 } from '../../api/index.js';
 import styles from './ScriptsPage.module.css';
 
@@ -132,7 +133,7 @@ function RunModal({ script, team, open, onClose }) {
                 <>
                   <input
                     key={`${arg.name}-${resetKey}`}
-                    className={styles.runInput}
+                    className={`${styles.runInput} ${styles.fileInput}`}
                     type="file"
                     accept=".js"
                     onChange={e => handleFileArgChange(arg, e.target.files?.[0] || null)}
@@ -196,6 +197,48 @@ function RunModal({ script, team, open, onClose }) {
 // ── Upload modal ──────────────────────────────────────────────────────────────
 const UPLOAD_INITIAL_FORM = { script_name:'', team:'', language:'', description:'', resources_cpu:'200m', resources_memory:'256Mi', dependencies:'', approval_required:true };
 
+// One blank argument row for the builder below. `id` is local-only (React
+// key + row identity while editing) and never sent to the backend.
+let argRowId = 0;
+const blankArgRow = () => ({
+  id: ++argRowId,
+  name: '', type: 'string', required: false, description: '',
+  example: '', unit: '', min: '', max: '', options: '',
+});
+
+// Turns the builder's rows into exactly the shape backend's /api/scripts/upload
+// expects for the `args` JSON field (see api_scripts_upload's validation):
+// name must be kebab-case, type one of string/integer/boolean/select/js_file,
+// select needs non-empty options, and min/max must be entirely absent (not
+// just empty) for every type except integer.
+function buildArgsPayload(rows) {
+  return rows
+    .filter(row => row.name.trim())
+    .map(row => {
+      const arg = {
+        name: row.name.trim(),
+        type: row.type,
+        required: !!row.required,
+      };
+      if (row.description.trim()) arg.description = row.description.trim();
+      // Backend never restricts `example` by type -- real script.yaml
+      // examples use it on select args too (alongside options), not just
+      // string/integer.
+      if (row.type !== 'boolean' && row.type !== 'js_file' && row.example.trim()) {
+        arg.example = row.example.trim();
+      }
+      if (row.type === 'integer') {
+        if (row.unit.trim()) arg.unit = row.unit.trim();
+        if (row.min.trim() !== '') arg.min = Number(row.min);
+        if (row.max.trim() !== '') arg.max = Number(row.max);
+      }
+      if (row.type === 'select') {
+        arg.options = row.options.split(',').map(o => o.trim()).filter(Boolean);
+      }
+      return arg;
+    });
+}
+
 function UploadModal({ open, onClose, teams }) {
   // Keys here must match exactly what backend's /api/scripts/upload reads
   // via request.form.get(...) — handleUpload below spreads this object
@@ -207,6 +250,7 @@ function UploadModal({ open, onClose, teams }) {
   const [form,    setForm]    = useState(UPLOAD_INITIAL_FORM);
   const [scriptFile, setScriptFile] = useState(null);
   const [logoFile,   setLogoFile]   = useState(null);
+  const [argRows,    setArgRows]    = useState([]);
   const [loading, setLoading] = useState(false);
   // Bumped on every reset to remount the two file inputs — see RunModal's
   // resetKey above for why that's needed (React state alone can't clear a
@@ -221,23 +265,30 @@ function UploadModal({ open, onClose, teams }) {
     setForm(UPLOAD_INITIAL_FORM);
     setScriptFile(null);
     setLogoFile(null);
+    setArgRows([]);
     setLoading(false);
     setResetKey(k => k + 1);
   }, [open]);
 
   const f = (k) => (e) => setForm(p => ({ ...p, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
 
+  const addArgRow = () => setArgRows(p => [...p, blankArgRow()]);
+  const removeArgRow = (id) => setArgRows(p => p.filter(row => row.id !== id));
+  const updateArgRow = (id, patch) => setArgRows(p => p.map(row => (row.id === id ? { ...row, ...patch } : row)));
+
   const handleUpload = async () => {
     if (!form.script_name || !form.team || !form.language || !form.description || !scriptFile) {
       toast.error('Please fill all required fields and attach a script file');
       return;
     }
+    const args = buildArgsPayload(argRows);
     setLoading(true);
     try {
       const fd = new FormData();
       Object.entries(form).forEach(([k,v]) => fd.append(k, v));
       fd.append('script_file', scriptFile);
       if (logoFile) fd.append('logo', logoFile);
+      if (args.length > 0) fd.append('args', JSON.stringify(args));
       const result = await uploadScript(fd);
       toast.success('MR created! ' + (result.mr_url ? `View: ${result.mr_url}` : ''));
       onClose();
@@ -287,11 +338,11 @@ function UploadModal({ open, onClose, teams }) {
         </FormGroup>
         <div className={styles.row}>
           <FormGroup label="Script File *">
-            <input key={`script-file-${resetKey}`} className={styles.input} type="file" accept=".py,.sh,.ps1"
+            <input key={`script-file-${resetKey}`} className={`${styles.input} ${styles.fileInput}`} type="file" accept=".py,.sh,.ps1"
                    onChange={e => setScriptFile(e.target.files[0])} />
           </FormGroup>
           <FormGroup label="Logo (optional)">
-            <input key={`logo-file-${resetKey}`} className={styles.input} type="file" accept=".png,.jpg,.jpeg"
+            <input key={`logo-file-${resetKey}`} className={`${styles.input} ${styles.fileInput}`} type="file" accept=".png,.jpg,.jpeg"
                    onChange={e => setLogoFile(e.target.files[0])} />
           </FormGroup>
         </div>
@@ -306,6 +357,112 @@ function UploadModal({ open, onClose, teams }) {
         <FormGroup label="Dependencies">
           <input className={styles.input} value={form.dependencies} onChange={f('dependencies')} placeholder="kubernetes, hvac" />
         </FormGroup>
+
+        <div className={styles.argsHeader}>
+          <span className={styles.formLabel}>Arguments</span>
+          <Button type="button" variant="ghost" size="sm" onClick={addArgRow}>+ Add argument</Button>
+        </div>
+        {argRows.length === 0 && (
+          <p className={styles.noArgs}>
+            No arguments — the script will run with no configurable inputs.
+          </p>
+        )}
+        {argRows.map((row, i) => (
+          <div key={row.id} className={styles.argRow}>
+            <div className={styles.argRowHead}>
+              <span className={styles.argRowNum}>#{i + 1}</span>
+              <button type="button" className={styles.argRemove} onClick={() => removeArgRow(row.id)}>
+                Remove
+              </button>
+            </div>
+            <div className={styles.row}>
+              <FormGroup label="Name * (kebab-case)">
+                <input
+                  className={styles.input}
+                  value={row.name}
+                  onChange={e => updateArgRow(row.id, { name: e.target.value })}
+                  placeholder="secret-name"
+                />
+              </FormGroup>
+              <FormGroup label="Type *">
+                <select
+                  className={styles.input}
+                  value={row.type}
+                  onChange={e => updateArgRow(row.id, { type: e.target.value })}
+                >
+                  <option value="string">String</option>
+                  <option value="integer">Integer</option>
+                  <option value="boolean">Boolean</option>
+                  <option value="select">Select</option>
+                  <option value="js_file">JS file</option>
+                </select>
+              </FormGroup>
+            </div>
+
+            <FormGroup label="Description">
+              <input
+                className={styles.input}
+                value={row.description}
+                onChange={e => updateArgRow(row.id, { description: e.target.value })}
+                placeholder="What this argument controls"
+              />
+            </FormGroup>
+
+            {/* Real script.yaml examples show `example` used on select args
+                too (e.g. example: site alongside options: [site1, site2]),
+                not just string/integer -- only boolean and js_file don't
+                really have a text example worth typing. */}
+            {row.type !== 'boolean' && row.type !== 'js_file' && (
+              <FormGroup label="Example">
+                <input
+                  className={styles.input}
+                  value={row.example}
+                  onChange={e => updateArgRow(row.id, { example: e.target.value })}
+                  placeholder={row.type === 'integer' ? '90' : row.type === 'select' ? 'site' : 'my-db-password'}
+                />
+              </FormGroup>
+            )}
+
+            {row.type === 'integer' && (
+              <div className={styles.row}>
+                <FormGroup label="Min">
+                  <input className={styles.input} type="number" value={row.min}
+                         onChange={e => updateArgRow(row.id, { min: e.target.value })} placeholder="1" />
+                </FormGroup>
+                <FormGroup label="Max">
+                  <input className={styles.input} type="number" value={row.max}
+                         onChange={e => updateArgRow(row.id, { max: e.target.value })} placeholder="365" />
+                </FormGroup>
+              </div>
+            )}
+            {row.type === 'integer' && (
+              <FormGroup label="Unit">
+                <input className={styles.input} value={row.unit}
+                       onChange={e => updateArgRow(row.id, { unit: e.target.value })} placeholder="days" />
+              </FormGroup>
+            )}
+
+            {row.type === 'select' && (
+              <FormGroup label="Options * (comma-separated)">
+                <input
+                  className={styles.input}
+                  value={row.options}
+                  onChange={e => updateArgRow(row.id, { options: e.target.value })}
+                  placeholder="dev, staging, prod"
+                />
+              </FormGroup>
+            )}
+
+            <label className={styles.checkboxRow}>
+              <input
+                type="checkbox"
+                checked={row.required}
+                onChange={e => updateArgRow(row.id, { required: e.target.checked })}
+              />
+              <span>Required</span>
+            </label>
+          </div>
+        ))}
       </div>
     </Modal>
   );
@@ -356,12 +513,185 @@ function PendingScriptsModal({ open, onClose }) {
   );
 }
 
+// ── Pending run approvals modal ─────────────────────────────────────────────────
+// Distinct from PendingScriptsModal above: that one reviews a script's CODE
+// (an MR awaiting merge). This one reviews a script RUN already submitted
+// with approval_required=true -- the workflow is sitting suspended in Argo,
+// and this shows exactly what the submitter entered, editable, before
+// relaying an approve/reject decision back to it.
+function PendingRunsModal({ open, onClose }) {
+  const [list,    setList]    = useState([]);
+  const [loading, setLoading] = useState(false);
+  // Per-request edited values, keyed by approval id -> { argName: value }.
+  // Seeded from each item's submitted args on load so editing one field
+  // doesn't require re-entering everything else.
+  const [editedArgs,   setEditedArgs]   = useState({});
+  const [busyId,       setBusyId]       = useState(null);
+  // "<approvalId>:<argName>" of the js_file currently expanded for viewing.
+  const [expandedFile, setExpandedFile] = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    fetchPendingRuns()
+      .then(items => {
+        setList(items);
+        setEditedArgs(prev => {
+          const next = { ...prev };
+          items.forEach(item => {
+            if (!next[item.id]) next[item.id] = { ...item.args };
+          });
+          return next;
+        });
+      })
+      .catch(() => toast.error('Failed to load pending runs'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { if (open) load(); }, [open, load]);
+
+  const updateField = (id, name, value) =>
+    setEditedArgs(prev => ({ ...prev, [id]: { ...prev[id], [name]: value } }));
+
+  // Replacing a js_file arg reuses the same stateless upload-and-convert
+  // endpoint the original RunModal uses -- the resulting base64 becomes the
+  // arg's new value, same as if the submitter had picked this file originally.
+  const handleFileReplace = async (id, name, file) => {
+    if (!file) return;
+    try {
+      const result = await uploadScriptArgFile(file);
+      updateField(id, name, result.value);
+      toast.success(`${file.name} ready — will replace the submitted file on approve`);
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
+  const handleApprove = async (item) => {
+    setBusyId(item.id);
+    try {
+      await approveRun(item.id, editedArgs[item.id] || item.args);
+      toast.success('Run approved');
+      setList(prev => prev.filter(p => p.id !== item.id));
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleReject = async (item) => {
+    setBusyId(item.id);
+    try {
+      await rejectRun(item.id);
+      toast.success('Run rejected');
+      setList(prev => prev.filter(p => p.id !== item.id));
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} wide title="Review Script Submissions"
+           subtitle="Runs waiting for approval before Argo executes them"
+           footer={<Button variant="secondary" onClick={onClose}>Close</Button>}>
+      {loading ? <p className={styles.loading}>Loading…</p> :
+       list.length === 0 ? <p className={styles.empty}>No runs awaiting approval</p> :
+       list.map(item => {
+         const values = editedArgs[item.id] || item.args;
+         const busy   = busyId === item.id;
+         return (
+           <div key={item.id} className={styles.runApprovalItem}>
+             <div className={styles.runApprovalHead}>
+               <div className={styles.pendingInfo}>
+                 <span className={styles.pendingName}>{item.script_name}</span>
+                 <span className={styles.pendingMeta}>{item.team} · submitted by {item.submitted_by}</span>
+               </div>
+               <div className={styles.pendingActions}>
+                 <Button size="sm" loading={busy} onClick={() => handleApprove(item)}>Approve &amp; Run</Button>
+                 <Button size="sm" variant="danger" disabled={busy} onClick={() => handleReject(item)}>Reject</Button>
+               </div>
+             </div>
+
+             {(item.arg_defs || []).length === 0 ? (
+               <p className={styles.noArgs}>This script has no arguments.</p>
+             ) : (
+               <div className={styles.runForm}>
+                 {item.arg_defs.map(arg => {
+                   const fileKey = `${item.id}:${arg.name}`;
+                   return (
+                     <div key={arg.name} className={styles.runField}>
+                       <label className={styles.runLabel}>
+                         {arg.name.replace(/-/g, ' ')}
+                         {arg.required && <span className={styles.req}> *required</span>}
+                       </label>
+
+                       {arg.type === 'boolean' ? (
+                         <label className={styles.toggle}>
+                           <input type="checkbox"
+                                  checked={values[arg.name] === 'true'}
+                                  onChange={e => updateField(item.id, arg.name, e.target.checked ? 'true' : 'false')} />
+                           <span className={styles.toggleSlider} />
+                         </label>
+                       ) : arg.type === 'js_file' ? (
+                         <>
+                           <button type="button" className={styles.fileViewToggle}
+                                   onClick={() => setExpandedFile(f => f === fileKey ? null : fileKey)}>
+                             {expandedFile === fileKey ? 'Hide file ▲' : 'Browse submitted file ▼'}
+                           </button>
+                           {expandedFile === fileKey && (
+                             <pre className={styles.fileContent}>
+                               {(() => {
+                                 try { return atob(values[arg.name] || ''); }
+                                 catch { return '(could not decode submitted file)'; }
+                               })()}
+                             </pre>
+                           )}
+                           <input
+                             className={`${styles.runInput} ${styles.fileInput}`}
+                             type="file"
+                             accept=".js"
+                             onChange={e => handleFileReplace(item.id, arg.name, e.target.files?.[0] || null)}
+                           />
+                         </>
+                       ) : arg.type === 'select' ? (
+                         <select className={styles.runInput}
+                                 value={values[arg.name] || ''}
+                                 onChange={e => updateField(item.id, arg.name, e.target.value)}>
+                           <option value="">-- select {arg.name} --</option>
+                           {(arg.options || []).map(opt => (
+                             <option key={opt} value={opt}>{opt}</option>
+                           ))}
+                         </select>
+                       ) : (
+                         <input
+                           className={styles.runInput}
+                           type={arg.type === 'integer' ? 'number' : 'text'}
+                           value={values[arg.name] || ''}
+                           onChange={e => updateField(item.id, arg.name, e.target.value)}
+                         />
+                       )}
+                     </div>
+                   );
+                 })}
+               </div>
+             )}
+           </div>
+         );
+       })
+      }
+    </Modal>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export function ScriptsPage({ scripts, isAdmin }) {
   const [runScript,    setRunScript]    = useState(null);
   const [runTeam,      setRunTeam]      = useState('');
   const [uploadOpen,   setUploadOpen]   = useState(false);
   const [pendingOpen,  setPendingOpen]  = useState(false);
+  const [pendingRunsOpen, setPendingRunsOpen] = useState(false);
   const location = useLocation();
 
   const teams = Object.keys(scripts);
@@ -421,7 +751,10 @@ export function ScriptsPage({ scripts, isAdmin }) {
       <div className={styles.actions}>
         <Button variant="ghost" onClick={() => setUploadOpen(true)}>+ Upload New Script</Button>
         {isAdmin && (
-          <Button variant="ghost" onClick={() => setPendingOpen(true)}>⏳ Review Script MRs</Button>
+          <>
+            <Button variant="ghost" onClick={() => setPendingOpen(true)}>⏳ Review Script MRs</Button>
+            <Button variant="ghost" onClick={() => setPendingRunsOpen(true)}>▶ Review Script Submissions</Button>
+          </>
         )}
       </div>
 
@@ -440,6 +773,10 @@ export function ScriptsPage({ scripts, isAdmin }) {
       <PendingScriptsModal
         open={pendingOpen}
         onClose={() => setPendingOpen(false)}
+      />
+      <PendingRunsModal
+        open={pendingRunsOpen}
+        onClose={() => setPendingRunsOpen(false)}
       />
     </div>
   );

@@ -62,6 +62,35 @@
 }
 .pendingActions { display: flex; gap: 6px; }
 
+/* Run approval review (Review Script Submissions modal) -- taller than a
+   pendingItem row since each one unfolds into a full args form below the
+   head line, not just a single row of text. */
+.runApprovalItem {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.runApprovalItem:last-child { border-bottom: none; }
+.runApprovalHead {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+}
+
+.fileViewToggle {
+  align-self: flex-start;
+  background: none; border: 1px solid var(--border2); border-radius: var(--radius-sm);
+  color: var(--text-muted); font-family: var(--font-mono); font-size: 0.62rem;
+  padding: 4px 9px; cursor: pointer;
+}
+.fileViewToggle:hover { color: var(--text); border-color: var(--accent); }
+
+.fileContent {
+  max-height: 220px; overflow: auto;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 10px 12px;
+  font-family: var(--font-mono); font-size: 0.68rem; line-height: 1.5;
+  color: var(--text); white-space: pre-wrap; word-break: break-word;
+}
+
 /* Run form */
 .runForm { display: flex; flex-direction: column; gap: 16px; }
 .runField { display: flex; flex-direction: column; gap: 5px; position: relative; }
@@ -97,6 +126,21 @@
 .toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .toggleRow { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 0.85rem; color: var(--text); }
 .toggle input, .toggleRow input { display: none; }
+
+/* Plain checkbox — unlike .toggle/.toggleRow above, the input stays
+   visible (native checkmark, themed via accent-color) instead of being
+   hidden in favor of a .toggleSlider. Used for the per-argument "Required"
+   row, which has no slider/Yes-No text pairing -- it used .toggleRow
+   before, which hid the checkbox with nothing to show its state instead,
+   so it looked identical whether checked or not. */
+.checkboxRow {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  font-size: 0.8rem; color: var(--text-muted);
+}
+.checkboxRow input {
+  accent-color: var(--accent);
+  width: 15px; height: 15px; cursor: pointer; flex-shrink: 0;
+}
 .toggleSlider {
   width: 42px; height: 22px; background: var(--border2); border-radius: 22px;
   position: relative; transition: background .2s; flex-shrink: 0;
@@ -125,3 +169,41 @@
   transition: border-color .15s, box-shadow .15s;
 }
 .input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+
+/* File inputs (Script File / Logo) — same treatment as DownloadUploadModal's
+   artifact picker: tighter padding and a real styled button for the native
+   file-selector, instead of the browser's stock control. */
+.fileInput { padding: 7px 9px; }
+.fileInput::file-selector-button {
+  margin-right: 10px;
+  padding: 5px 9px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  background: var(--surface3);
+  color: var(--text);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+}
+
+/* Argument builder (Upload New Script modal) */
+.argsHeader {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--border);
+}
+.argRow {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface2);
+}
+.argRowHead { display: flex; align-items: center; justify-content: space-between; }
+.argRowNum {
+  font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.1em;
+}
+.argRemove {
+  background: none; border: none; cursor: pointer;
+  color: var(--danger); font-family: var(--font-mono); font-size: 0.62rem;
+  text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 4px;
+}
+.argRemove:hover { text-decoration: underline; }

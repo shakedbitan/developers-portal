@@ -150,7 +150,7 @@ BANNER_OPTIONS = [
 ENV_COLOR_OPTIONS = [
     {"value": "",       "label": "None",   "color": None      },
     {"value": "green",  "label": "Green",  "color": "#22c55e" },
-    {"value": "orange", "label": "Orange", "color": "#f59e0b" },
+    {"value": "orange", "label": "Orange", "color": "#f59e0b" },        
     {"value": "purple", "label": "Purple", "color": "#a855f7" },
     {"value": "blue",   "label": "Blue",   "color": "#3b82f6" },
     {"value": "red",    "label": "Red",    "color": "#ef4444" },

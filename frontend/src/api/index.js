@@ -49,9 +49,25 @@ export const fetchPendingScripts = () => get('/api/scripts/pending');
 export const approveScript      = (id) => post('/api/scripts/approve', { id });
 export const rejectScript       = (id) => post('/api/scripts/reject',  { id });
 
+// Run approval -- a submitted run's arguments awaiting review before Argo
+// executes it, distinct from the MR-review pending scripts above.
+export const fetchPendingRuns = () => get('/api/scripts/runs/pending');
+export const approveRun       = (id, args) => post('/api/scripts/runs/approve', { id, args });
+export const rejectRun        = (id) => post('/api/scripts/runs/reject', { id });
+
 export const uploadScript = (formData) =>
   fetch('/api/scripts/upload', { method: 'POST', body: formData })
-    .then(r => r.json().then(d => { if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d; }));
+    .then(r => r.json().then(d => {
+      if (!r.ok) {
+        // field_errors only ever has one entry today (validation stops at the
+        // first failure), but the backend's contract is a dict — handle it as
+        // one. Without this, every validation failure showed as a bare
+        // "Validation failed" with no hint which field or why.
+        const detail = d.field_errors && Object.entries(d.field_errors).map(([k, v]) => `${k}: ${v}`).join('; ');
+        throw new Error(detail ? `${d.error} — ${detail}` : (d.error || `HTTP ${r.status}`));
+      }
+      return d;
+    }));
 
 // Converts a .js file to its oneline-base64 value for a js_file run argument.
 // Stateless -- nothing is stored server-side. Returns { value, filename, size };

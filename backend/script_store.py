@@ -147,8 +147,14 @@ def _parse_script_yaml(raw: str, team: str, script_name: str, script_path: str, 
             "default":     arg.get("default", ""),
             "description": arg.get("description", ""),
             "example":     str(arg.get("example", "")),
-            "options":     raw_options,        # list or dict — preserved as-is
+            "options":     raw_options,        # list, dict, or (argo_target) list of {name,label,url} — preserved as-is
             "depends_on":  arg.get("depends_on", ""),  # parent arg name if dependent
+            # Marks this select as the Argo-instance picker rather than a
+            # normal runtime arg -- its `options` are {name, label, url}
+            # objects, its chosen value routes the submission instead of
+            # being passed to the script, and app.py strips it out of the
+            # args the script actually receives.
+            "argo_target": bool(arg.get("argo_target", False)),
         }
         args.append(parsed_arg)
 

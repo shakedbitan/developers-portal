@@ -154,6 +154,22 @@ function RunModal({ script, team, open, onClose }) {
                     </span>
                   )}
                 </>
+              ) : arg.type === 'select' && arg.argo_target ? (
+                // Picks which Argo instance this run submits to -- options
+                // are {name, label, url} objects, not plain scalars. Only
+                // the chosen `name` goes in args; the backend resolves the
+                // real URL server-side (never trust a client-supplied URL)
+                // and strips this value out before it reaches the script.
+                <select
+                  className={styles.runInput}
+                  value={args[arg.name] || ''}
+                  onChange={e => updateArg(arg.name, e.target.value)}
+                >
+                  <option value="">-- select {arg.name} --</option>
+                  {(arg.options || []).map(opt => (
+                    <option key={opt.name} value={opt.name}>{opt.label || opt.name}</option>
+                  ))}
+                </select>
               ) : arg.type === 'select' ? (
                 <select
                   className={styles.runInput}
@@ -592,6 +608,18 @@ function PendingRunsModal({ open, onClose }) {
     }
   };
 
+  // Dependent selects (arg.depends_on set) store their options as an object
+  // keyed by the parent's value, not a flat array -- same shape RunModal's
+  // getChildOptions reads. A plain (non-dependent) select's options is a
+  // flat array already.
+  const getChildOptions = (item, arg) => {
+    const values = editedArgs[item.id] || item.args;
+    const parent = (item.arg_defs || []).find(a => a.name === arg.depends_on);
+    const parentVal = parent ? (values[parent.name] || '') : '';
+    if (!parentVal) return [];
+    return (arg.options || {})[parentVal] || [];
+  };
+
   return (
     <Modal open={open} onClose={onClose} wide title="Review Script Submissions"
            subtitle="Runs waiting for approval before Argo executes them"
@@ -619,12 +647,17 @@ function PendingRunsModal({ open, onClose }) {
              ) : (
                <div className={styles.runForm}>
                  {item.arg_defs.map(arg => {
-                   const fileKey = `${item.id}:${arg.name}`;
+                   const fileKey     = `${item.id}:${arg.name}`;
+                   const isDependent = !!arg.depends_on;
+                   const parentVal   = isDependent ? (values[arg.depends_on] || '') : null;
+                   const childOpts   = isDependent ? getChildOptions(item, arg) : [];
+                   const selDisabled = isDependent && !parentVal;
                    return (
                      <div key={arg.name} className={styles.runField}>
                        <label className={styles.runLabel}>
                          {arg.name.replace(/-/g, ' ')}
                          {arg.required && <span className={styles.req}> *required</span>}
+                         {arg.depends_on && <span className={styles.dep}> depends on {arg.depends_on}</span>}
                        </label>
 
                        {arg.type === 'boolean' ? (
@@ -655,12 +688,33 @@ function PendingRunsModal({ open, onClose }) {
                              onChange={e => handleFileReplace(item.id, arg.name, e.target.files?.[0] || null)}
                            />
                          </>
+                       ) : arg.type === 'select' && arg.argo_target ? (
+                         // Which Argo instance the workflow submitted to is
+                         // locked in at submission time -- there's no
+                         // "move it to a different server" operation, so
+                         // this is shown for context, not editable.
+                         <div className={styles.lockedValue}>
+                           {(arg.options || []).find(o => o.name === values[arg.name])?.label
+                             || values[arg.name] || '(not set)'}
+                           <span className={styles.lockedHint}>locked at submission</span>
+                         </div>
                        ) : arg.type === 'select' ? (
                          <select className={styles.runInput}
                                  value={values[arg.name] || ''}
-                                 onChange={e => updateField(item.id, arg.name, e.target.value)}>
-                           <option value="">-- select {arg.name} --</option>
-                           {(arg.options || []).map(opt => (
+                                 disabled={selDisabled}
+                                 onChange={e => {
+                                   updateField(item.id, arg.name, e.target.value);
+                                   // Clear any selects that depend on this one --
+                                   // their previously-picked value may no longer
+                                   // be a valid option under the new parent value.
+                                   (item.arg_defs || []).forEach(a => {
+                                     if (a.depends_on === arg.name) updateField(item.id, a.name, '');
+                                   });
+                                 }}>
+                           <option value="">
+                             {selDisabled ? `Select ${arg.depends_on} first` : `-- select ${arg.name} --`}
+                           </option>
+                           {(isDependent ? childOpts : (arg.options || [])).map(opt => (
                              <option key={opt} value={opt}>{opt}</option>
                            ))}
                          </select>

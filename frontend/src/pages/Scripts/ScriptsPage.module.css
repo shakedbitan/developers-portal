@@ -75,6 +75,18 @@
   display: flex; align-items: center; justify-content: space-between; gap: 14px;
 }
 
+.lockedValue {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text); font-size: 0.9rem;
+}
+.lockedHint {
+  font-family: var(--font-mono); font-size: 0.58rem;
+  color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em;
+}
+
 .fileViewToggle {
   align-self: flex-start;
   background: none; border: 1px solid var(--border2); border-radius: var(--radius-sm);

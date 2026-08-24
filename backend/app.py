@@ -278,7 +278,14 @@ def _validate_args(user_args: dict, arg_defs: list) -> dict:
         elif arg_type == "select":
             options = arg_def.get("options", [])
             if options:
-                if isinstance(options, dict):
+                if arg_def.get("argo_target"):
+                    # Argo-instance picker — options is a list of
+                    # {name, label, url} objects, not plain scalars; valid
+                    # values are each option's `name`.
+                    valid_names = [o.get("name") for o in options if isinstance(o, dict)]
+                    if str(val) not in valid_names:
+                        errors[name] = f"Must be one of: {', '.join(valid_names)}"
+                elif isinstance(options, dict):
                     # Dependent select — validate against the parent's chosen options
                     depends_on = arg_def.get("depends_on", "")
                     parent_val = str(user_args.get(depends_on, "")) if depends_on else ""
@@ -303,6 +310,35 @@ def _validate_args(user_args: dict, arg_defs: list) -> dict:
                 errors[name] = "Uploaded file content is invalid — please re-upload"
 
     return errors
+
+
+def _find_argo_target_arg(script_def: dict) -> dict | None:
+    """The at-most-one arg (if any) marked argo_target: true in this
+    script's definition -- see script_store._parse_script_yaml."""
+    return next((a for a in script_def.get("args", []) if a.get("argo_target")), None)
+
+
+def _resolve_argo_target(target_arg: dict, user_args: dict):
+    """
+    Resolves the submitter's chosen Argo-instance name to a real URL,
+    looked up from the script's own option list -- never trusts a URL
+    supplied directly by the client, since that would let a request target
+    an arbitrary Argo endpoint.
+
+    Returns (url, option_dict, error_message); error_message is None on
+    success and the other two are None on failure.
+    """
+    chosen_name = user_args.get(target_arg["name"])
+    if not chosen_name:
+        return None, None, "This field is required"
+    option = next(
+        (o for o in target_arg.get("options", [])
+         if isinstance(o, dict) and o.get("name") == chosen_name),
+        None,
+    )
+    if not option or not option.get("url"):
+        return None, None, f"Unknown option: {chosen_name}"
+    return option["url"], option, None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -452,7 +488,8 @@ _local_run_approvals: list = []
 _local_run_approval_next_id = 0
 
 
-def _create_local_run_approval(team, script_name, args, workflow_name, namespace, submitted_by) -> dict:
+def _create_local_run_approval(team, script_name, args, workflow_name, namespace, submitted_by,
+                                argo_url=None) -> dict:
     global _local_run_approval_next_id
     with _local_run_approvals_lock:
         _local_run_approval_next_id += 1
@@ -463,6 +500,7 @@ def _create_local_run_approval(team, script_name, args, workflow_name, namespace
             "args": dict(args),
             "workflow_name": workflow_name,
             "namespace": namespace,
+            "argo_url": argo_url,
             "submitted_by": submitted_by,
             "status": "pending",
         })
@@ -531,35 +569,55 @@ def api_scripts_submit():
     # exactly like every other arg type. Nothing is stored/referenced
     # server-side at any point.
 
+    # A script may declare one arg as argo_target -- its value picks which
+    # Argo instance to submit to (see script_store._parse_script_yaml),
+    # rather than being a real runtime argument. Resolve it server-side
+    # from the script's own option list (never trust a URL from the
+    # client), and keep it out of what actually reaches the script as args.
+    target_arg = _find_argo_target_arg(script_def)
+    argo_url   = None
+    script_args = user_args
+    if target_arg:
+        argo_url, _target_option, err = _resolve_argo_target(target_arg, user_args)
+        if err:
+            return jsonify({"error": "Validation failed",
+                             "field_errors": {target_arg["name"]: err}}), 422
+        script_args = {k: v for k, v in user_args.items() if k != target_arg["name"]}
+
     approval_required = script_def.get("approval_required", True)
     result = argo_client.submit_workflow(
         team=team,
         script_name=script_name,
         language=script_def["language"],
         script_path=script_def["path"],
-        user_args=user_args,
+        user_args=script_args,
         dependencies=script_def.get("dependencies", []),
         approval_required=approval_required,
         resources=script_def.get("resources", {}),
+        argo_url=argo_url,
     )
 
     # Runs that need approval are left suspended in Argo -- track them so
     # they can be reviewed (and their args edited) through Eden's own UI
     # instead of only through Argo's. Only recorded on a successful submit;
     # if Argo itself rejected the submission there's no workflow to approve.
+    # `args` here is the *full* submitted dict (including the target
+    # selection, if any) so the review UI can still display which target
+    # was chosen -- only the args actually sent to Argo exclude it.
     if approval_required and "error" not in result:
         submitted_by = auth.get_current_username()
+        resolved_argo_url = result.get("argo_url")
         if db.is_available():
             db.create_run_approval(
                 team=team, script_name=script_name, args=user_args,
                 workflow_name=result["workflow_name"], namespace=result["namespace"],
-                submitted_by=submitted_by,
+                submitted_by=submitted_by, argo_url=resolved_argo_url,
             )
         else:
             _create_local_run_approval(
                 team=team, script_name=script_name, args=user_args,
                 workflow_name=result["workflow_name"], namespace=result["namespace"],
-                submitted_by=submitted_by,
+                submitted_by=submitted_by, argo_url=resolved_argo_url,
             )
 
     return jsonify(result), (200 if "error" not in result else 502)
@@ -1007,7 +1065,7 @@ def api_scripts_runs_pending():
     pending = _get_pending_run_approvals_raw()
     still_pending = []
     for item in pending:
-        live = argo_client.get_workflow_status(item["namespace"], item["workflow_name"])
+        live = argo_client.get_workflow_status(item["namespace"], item["workflow_name"], item.get("argo_url"))
         if live is not None and live.get("approval_phase") not in (None, "Running", "Pending"):
             # Resolved outside Eden -- reflect the real outcome instead of
             # leaving a stale "pending" row for something already handled.
@@ -1047,7 +1105,17 @@ def api_scripts_runs_approve():
     if not item:
         return jsonify({"error": "Approval request not found"}), 404
 
-    result = argo_client.resume_workflow(item["namespace"], item["workflow_name"], "YES", edited_args)
+    # Same as submit: the argo_target arg (if any) is submission-routing
+    # metadata, not a real script argument -- exclude it from what actually
+    # gets exported as env vars, same as api_scripts_submit does.
+    script_def = script_store.get_script(item["team"], item["script_name"])
+    target_arg = _find_argo_target_arg(script_def) if script_def else None
+    resume_args = edited_args
+    if target_arg:
+        resume_args = {k: v for k, v in edited_args.items() if k != target_arg["name"]}
+
+    result = argo_client.resume_workflow(item["namespace"], item["workflow_name"], "YES",
+                                          resume_args, item.get("argo_url"))
     if "error" in result:
         return jsonify(result), 502
 
@@ -1075,7 +1143,14 @@ def api_scripts_runs_reject():
     if not item:
         return jsonify({"error": "Approval request not found"}), 404
 
-    result = argo_client.resume_workflow(item["namespace"], item["workflow_name"], "NO", item["args"])
+    script_def = script_store.get_script(item["team"], item["script_name"])
+    target_arg = _find_argo_target_arg(script_def) if script_def else None
+    reject_args = item["args"]
+    if target_arg:
+        reject_args = {k: v for k, v in item["args"].items() if k != target_arg["name"]}
+
+    result = argo_client.resume_workflow(item["namespace"], item["workflow_name"], "NO",
+                                          reject_args, item.get("argo_url"))
     if "error" in result:
         return jsonify(result), 502
 

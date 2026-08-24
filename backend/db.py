@@ -214,6 +214,7 @@ def init_schema():
         args          JSONB NOT NULL DEFAULT '{}',
         workflow_name TEXT NOT NULL,
         namespace     TEXT NOT NULL,
+        argo_url      TEXT,
         submitted_by  TEXT,
         submitted_at  TIMESTAMP DEFAULT NOW(),
         status        TEXT DEFAULT 'pending',
@@ -222,6 +223,9 @@ def init_schema():
     );
 
     ALTER TABLE user_stars ADD COLUMN IF NOT EXISTS site_id INTEGER;
+    -- Added after script_run_approvals first shipped -- IF NOT EXISTS so
+    -- this is a no-op on a fresh install where the column's already there.
+    ALTER TABLE script_run_approvals ADD COLUMN IF NOT EXISTS argo_url TEXT;
     """
     try:
         with get_conn() as conn:
@@ -537,16 +541,17 @@ def update_script_submission_status(submission_id: int, status: str) -> bool:
 # ── Script run approvals ────────────────────────────────────────────────────
 
 def create_run_approval(team: str, script_name: str, args: dict,
-                         workflow_name: str, namespace: str, submitted_by: str) -> dict:
+                         workflow_name: str, namespace: str, submitted_by: str,
+                         argo_url: str | None = None) -> dict:
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """INSERT INTO script_run_approvals
-                       (team, script_name, args, workflow_name, namespace, submitted_by)
-                       VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
+                       (team, script_name, args, workflow_name, namespace, submitted_by, argo_url)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
                     (team, script_name, psycopg2.extras.Json(args),
-                     workflow_name, namespace, submitted_by),
+                     workflow_name, namespace, submitted_by, argo_url),
                 )
                 return {"id": cur.fetchone()[0]}
     except Exception as e:
@@ -559,7 +564,7 @@ def get_pending_run_approvals() -> list[dict]:
         with get_conn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
-                    """SELECT id, team, script_name, args, workflow_name, namespace,
+                    """SELECT id, team, script_name, args, workflow_name, namespace, argo_url,
                               submitted_by, submitted_at
                        FROM script_run_approvals WHERE status = 'pending'
                        ORDER BY submitted_at ASC"""

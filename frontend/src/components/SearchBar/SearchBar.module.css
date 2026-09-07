@@ -29,6 +29,7 @@
   transition:
     top .35s cubic-bezier(.4,0,.2,1),
     left .35s cubic-bezier(.4,0,.2,1),
+    right .35s cubic-bezier(.4,0,.2,1),
     margin-left .35s cubic-bezier(.4,0,.2,1),
     width .35s cubic-bezier(.4,0,.2,1),
     height .35s cubic-bezier(.4,0,.2,1),
@@ -51,15 +52,26 @@
 
 /* Docked — every screen except Home. A small pill sitting in the TopBar,
    between the tabs and the theme toggle, permanently at rest in this
-   size — no separate collapsed-to-icon state, always ready to type into. */
+   size — no separate collapsed-to-icon state, always ready to type into.
+
+   Positioned from the right edge using --topbar-right-w -- the actual
+   live width of TopBar's own .right button group (published via a
+   ResizeObserver in TopBar.jsx, since this pill is that div's sibling, not
+   its child, and can't measure it directly). A hardcoded pixel clearance
+   here is exactly what broke before: it was tuned for a single theme-toggle
+   button, and silently started sitting *under* the My Requests button once
+   that button existed -- right-anchoring off the real measured width means
+   it can't drift out of sync with .right again, no matter how many buttons
+   end up there. 2rem matches .topbar's own right padding (the gap between
+   .right's own box and the viewport edge), +16px is breathing room. */
 .wrap.docked .inner {
   top: calc((var(--topbar-h) - 36px) / 2);
-  left: 100%;
-  /* Same 110px right-side clearance the 250px version had (360 - 250 =
-     110, reserved for the theme toggle) carried forward at the new width:
-     340 + 110 = 450. Widened from 250 to 340 to match .dockedResults below
-     it, which was wider than the pill sitting above it. */
-  margin-left: -450px;
+  left: auto;
+  /* Base rule's margin-left: -430px (the Home centering trick) would
+     otherwise still apply on top of `right` and shift this 430px too far
+     left -- margins stack with `right`-positioning same as with `left`. */
+  margin-left: 0;
+  right: calc(2rem + var(--topbar-right-w, 140px) + 16px);
   width: 340px;
   height: 36px;
   border-radius: 10px;

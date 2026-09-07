@@ -9,8 +9,10 @@ import { ScriptsPage }   from './pages/Scripts/ScriptsPage.jsx';
 import { useAuth }       from './hooks/useAuth.js';
 import { useTheme }      from './hooks/useTheme.js';
 import { useStars }      from './hooks/useStars.js';
-import { fetchSites, fetchScripts } from './api/index.js';
+import { useMyRequests } from './hooks/useMyRequests.js';
+import { fetchSites, fetchScripts, fetchMyHistory } from './api/index.js';
 import { LoadingOverlay } from './components/LoadingOverlay/LoadingOverlay.jsx';
+import { MyRequestsModal } from './components/MyRequestsModal/MyRequestsModal.jsx';
 import styles from './App.module.css';
 
 const TAB_ORDER = ['/', '/apps', '/scripts', '/downloads'];
@@ -19,6 +21,7 @@ export default function App() {
   const { user }          = useAuth();
   const { theme, toggle } = useTheme();
   const { starredSites, starredIds, toggleStar, reorder, refresh: refreshStars } = useStars();
+  const { active: myRequests, loading: myRequestsLoading, refresh: refreshMyRequests } = useMyRequests();
   const navigate          = useNavigate();
   const location          = useLocation();
   const scrollRef         = useRef(null);
@@ -29,6 +32,22 @@ export default function App() {
   const [sites,   setSites]   = useState([]);
   const [scripts, setScripts] = useState({});
   const [blurred, setBlurred] = useState(false);
+
+  const [myRequestsOpen, setMyRequestsOpen] = useState(false);
+  const [historyItems,   setHistoryItems]   = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  // History is fetched when the (single, combined) My Requests panel opens
+  // -- active items are already kept warm by useMyRequests' own polling,
+  // history doesn't need the same live-ness so a fetch-on-open is enough.
+  const openMyRequests = () => {
+    setMyRequestsOpen(true);
+    setHistoryLoading(true);
+    fetchMyHistory()
+      .then(setHistoryItems)
+      .catch(() => {})
+      .finally(() => setHistoryLoading(false));
+  };
 
   // ── Scroll lock ───────────────────────────────────────────────────────────
   // eden:dragStart  — fired by drag handlers. Locks wheel snap AND hides overflow
@@ -173,8 +192,24 @@ export default function App() {
       <div className="noise" />
       <LoadingOverlay />
 
-      <TopBar username={user?.username} theme={theme} onToggleTheme={toggle} />
+      <TopBar
+        username={user?.username}
+        theme={theme}
+        onToggleTheme={toggle}
+        myRequestsCount={myRequests.length}
+        onOpenMyRequests={openMyRequests}
+      />
       <SearchBar sites={sites} scripts={scripts} />
+
+      <MyRequestsModal
+        open={myRequestsOpen}
+        onClose={() => setMyRequestsOpen(false)}
+        activeItems={myRequests}
+        activeLoading={myRequestsLoading}
+        onRefreshActive={refreshMyRequests}
+        historyItems={historyItems}
+        historyLoading={historyLoading}
+      />
 
       <div ref={scrollRef} className={styles.snapContainer}>
         <section className={styles.snapSection}>

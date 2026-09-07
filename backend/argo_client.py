@@ -304,3 +304,61 @@ def get_workflow_status(namespace: str, workflow_name: str, argo_url: str | None
         "approval_phase": approval_node.get("phase") if approval_node else None,
         "approval_outputs": approval_outputs,
     }
+
+
+def stream_workflow_logs(namespace: str, workflow_name: str, argo_url: str | None = None):
+    """
+    Yields {"pod": str, "content": str} for each log line as the workflow's
+    pod produces it -- a generator over Argo's own
+    /log?logOptions.follow=true streaming endpoint (chunked JSON-lines,
+    each like `{"result": {"podName": "...", "content": "..."}}`), NOT raw
+    Kubernetes pod logs -- Eden never talks to the Kubernetes API directly
+    for this. Same principle as everywhere else in this file: Argo's own
+    ServiceAccount already has RBAC to read its pods' logs and exposes it
+    through its REST API, so Eden doesn't need a Kubernetes RBAC grant of
+    its own just to show live output.
+
+    A caller iterating this sees it end naturally when Argo's stream does
+    (the pod's gone / logs finished) -- there's no separate "is this done"
+    signal here, that's what get_workflow_status's workflow_phase is for.
+
+    Yields nothing (empty generator) on any failure to even open the
+    stream (network issue, 404, bad token, workflow has no pod yet, ...) --
+    logged, not raised, so a caller relaying this as SSE can just end the
+    response cleanly instead of blowing up mid-stream.
+    """
+    argo_url = argo_url or config.ARGO_URL
+    url = f"{argo_url}/api/v1/workflows/{namespace}/{workflow_name}/log"
+    params = {
+        "logOptions.follow": "true",
+        "logOptions.timestamps": "true",
+    }
+    try:
+        resp = requests.get(
+            url, headers=_headers(argo_url), params=params,
+            stream=True, timeout=(10, 60 * 30), verify=False,
+        )
+    except requests.exceptions.RequestException as e:
+        logger.warning("Failed to open log stream for %s/%s: %s", namespace, workflow_name, e)
+        return
+
+    if resp.status_code != 200:
+        logger.warning("Log stream for %s/%s -> %d: %s", namespace, workflow_name,
+                        resp.status_code, resp.text[:300])
+        return
+
+    for raw_line in resp.iter_lines(decode_unicode=True):
+        if not raw_line:
+            continue
+        try:
+            data = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        result = data.get("result") or {}
+        content = result.get("content")
+        if content is None:
+            # Argo also streams non-content control messages on this same
+            # endpoint (e.g. a closing gRPC status) -- skip anything that
+            # isn't an actual log line.
+            continue
+        yield {"pod": result.get("podName", ""), "content": content}

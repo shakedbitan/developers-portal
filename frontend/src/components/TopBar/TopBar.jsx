@@ -38,8 +38,9 @@ const TABS = [
   { path: '/downloads',  label: 'Downloads', icon: '/images/downloads.svg' },
 ];
 
-export function TopBar({ username, theme, onToggleTheme }) {
+export function TopBar({ username, theme, onToggleTheme, myRequestsCount = 0, onOpenMyRequests }) {
   const [modalOpen, setModalOpen] = React.useState(false);
+  const rightRef = React.useRef(null);
 
   React.useEffect(() => {
     const onLock   = () => setModalOpen(true);
@@ -51,6 +52,27 @@ export function TopBar({ username, theme, onToggleTheme }) {
       window.removeEventListener('eden:unlockScroll', onUnlock);
     };
   }, []);
+
+  // Publishes .right's actual rendered width as a CSS var so SearchBar's
+  // docked pill (a sibling, not a child -- it can't just measure this
+  // element itself) can reserve exactly enough clearance and never sit
+  // under these buttons -- a fixed pixel guess here is exactly what broke
+  // the last time a button was added to .right without updating it. A
+  // ResizeObserver (not a one-time measurement) because .right's own width
+  // changes at runtime too -- e.g. the My Requests badge appearing/
+  // disappearing as its count changes.
+  React.useEffect(() => {
+    const el = rightRef.current;
+    if (!el) return undefined;
+    const publish = () => {
+      document.documentElement.style.setProperty('--topbar-right-w', `${el.offsetWidth}px`);
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   const navigate  = useNavigate();
   const { pathname } = useLocation();
 
@@ -86,8 +108,12 @@ export function TopBar({ username, theme, onToggleTheme }) {
         ))}
       </nav>
 
-      {/* Right — theme toggle */}
-      <div className={styles.right}>
+      {/* Right — my requests (active + history in one panel), theme toggle */}
+      <div className={styles.right} ref={rightRef}>
+        <button type="button" className={styles.iconBtn} onClick={onOpenMyRequests} title="My Requests">
+          📥 My Requests
+          {myRequestsCount > 0 && <span className={styles.badge}>{myRequestsCount}</span>}
+        </button>
         <button type="button" className={styles.themeBtn} onClick={onToggleTheme} title="Toggle theme">
           {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
         </button>

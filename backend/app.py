@@ -52,6 +52,8 @@ import script_store
 import download_catalog
 import db
 import auth
+import audit_log
+import run_tracker
 
 import os as _os
 
@@ -95,6 +97,11 @@ os.makedirs(FAVICON_CACHE_DIR, exist_ok=True)
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 def _startup():
+    # 0. Structured audit-event logging (submission created/reviewed, run
+    # finished) -- separate channel, safe to init before the DB is even up
+    # since it's just a logging.Handler, no connection of its own.
+    audit_log.init()
+
     # 1. Load scripts from GitLab
     # Always call load_all() even with TEAMS unset -- script_store handles
     # an empty team list fine (loads nothing), and falls back to the local
@@ -123,6 +130,11 @@ def _startup():
             args=(script_store.reload_async,),
             daemon=True,
         ).start()
+
+        # 4. Start polling Argo for approved-and-running script runs'
+        # phase, so "my requests" -> "history" and run_finished audit
+        # events fire once a workflow actually completes (see run_tracker.py).
+        run_tracker.start()
     else:
         logger.error("Startup: database unavailable -- sites/stars features will not work")
 
@@ -173,7 +185,15 @@ def _resolve_site_image(name: str, favicon_url: str = "", site_id=None) -> str:
                 return f"/site-images/{slug}.{ext}"
     if favicon_url:
         if favicon_url.startswith("data:") and site_id is not None:
-            return f"/api/sites/{site_id}/favicon"
+            # `v` is a hash of the actual image bytes, not a timestamp --
+            # this URL needs to change exactly when the picture does (so an
+            # edit is visible immediately, not stuck behind the favicon
+            # route's max_age=3600 browser cache for up to an hour) and
+            # stay IDENTICAL otherwise (so unrelated re-renders/reloads
+            # keep hitting that hour-long cache instead of refetching an
+            # unchanged image every time).
+            v = hashlib.md5(favicon_url.encode("utf-8")).hexdigest()[:10]
+            return f"/api/sites/{site_id}/favicon?v={v}"
         return favicon_url
     return "/icons/placeholder.svg"
 
@@ -583,7 +603,7 @@ _local_run_approval_next_id = 0
 
 
 def _create_local_run_approval(team, script_name, args, workflow_name, namespace, submitted_by,
-                                argo_url=None) -> dict:
+                                argo_url=None, requires_approval=True) -> dict:
     global _local_run_approval_next_id
     with _local_run_approvals_lock:
         _local_run_approval_next_id += 1
@@ -597,7 +617,12 @@ def _create_local_run_approval(team, script_name, args, workflow_name, namespace
             "argo_url": argo_url,
             "submitted_by": submitted_by,
             "submitted_at": datetime.now(timezone.utc).isoformat(),
-            "status": "pending",
+            "status": "pending" if requires_approval else "approved",
+            "requires_approval": requires_approval,
+            "workflow_phase": None,
+            "reviewed_by": None,
+            "reviewed_at": None,
+            "resolved_at": None,
         })
         return {"id": _local_run_approval_next_id}
 
@@ -607,6 +632,12 @@ def _get_local_pending_run_approvals() -> list:
         return [dict(r) for r in _local_run_approvals if r["status"] == "pending"]
 
 
+def _get_local_my_runs(username: str, active: bool) -> list:
+    with _local_run_approvals_lock:
+        return [dict(r) for r in _local_run_approvals
+                if r["submitted_by"] == username and (r["resolved_at"] is None) == active]
+
+
 def _update_local_run_approval_status(approval_id: int, status: str, reviewed_by: str,
                                        final_args: dict | None = None) -> bool:
     with _local_run_approvals_lock:
@@ -614,6 +645,9 @@ def _update_local_run_approval_status(approval_id: int, status: str, reviewed_by
             if r["id"] == approval_id:
                 r["status"] = status
                 r["reviewed_by"] = reviewed_by
+                r["reviewed_at"] = datetime.now(timezone.utc).isoformat()
+                if status == "rejected":
+                    r["resolved_at"] = r["reviewed_at"]
                 if final_args is not None:
                     r["args"] = dict(final_args)
                 return True
@@ -693,27 +727,37 @@ def api_scripts_submit():
         argo_url=argo_url,
     )
 
-    # Runs that need approval are left suspended in Argo -- track them so
-    # they can be reviewed (and their args edited) through Eden's own UI
-    # instead of only through Argo's. Only recorded on a successful submit;
-    # if Argo itself rejected the submission there's no workflow to approve.
+    # Every successful submit gets a tracking row now -- not just
+    # approval_required ones -- so "my requests"/"history" can show a user
+    # every run they've submitted, fire-and-forget scripts included, not
+    # only the ones that needed a reviewer. requires_approval=False rows
+    # start life already 'approved' (see db.create_run_approval): there's
+    # no gate to open, Argo's already running it, run_tracker's poller
+    # picks up its workflow_phase like any other approved run. Only
+    # recorded on a successful submit; if Argo itself rejected the
+    # submission there's no workflow to track at all.
     # `args` here is the *full* submitted dict (including the target
-    # selection, if any) so the review UI can still display which target
-    # was chosen -- only the args actually sent to Argo exclude it.
-    if approval_required and "error" not in result:
+    # selection, if any) so the review/history UI can still display which
+    # target was chosen -- only the args actually sent to Argo exclude it.
+    if "error" not in result:
         submitted_by = auth.get_current_username()
         resolved_argo_url = result.get("argo_url")
         if db.is_available():
-            db.create_run_approval(
+            run_result = db.create_run_approval(
                 team=team, script_name=script_name, args=user_args,
                 workflow_name=result["workflow_name"], namespace=result["namespace"],
                 submitted_by=submitted_by, argo_url=resolved_argo_url,
+                requires_approval=approval_required,
             )
+            if approval_required and "error" not in run_result:
+                audit_log.submission_created("script_run", run_result["id"], submitted_by,
+                                              pending_count=len(db.get_pending_run_approvals()))
         else:
             _create_local_run_approval(
                 team=team, script_name=script_name, args=user_args,
                 workflow_name=result["workflow_name"], namespace=result["namespace"],
                 submitted_by=submitted_by, argo_url=resolved_argo_url,
+                requires_approval=approval_required,
             )
 
     return jsonify(result), (200 if "error" not in result else 502)
@@ -861,12 +905,16 @@ def api_scripts_upload():
     # Store in DB for admin approval UI
     mr_url = result.get("web_url", "")
     mr_iid = result.get("iid") or 0
-    db.create_script_submission(
+    username = auth.get_current_username()
+    sub_result = db.create_script_submission(
         script_name=script_name, team=team, language=language,
         mr_url=mr_url, mr_iid=mr_iid,
-        submitted_by=auth.get_current_username(),
+        submitted_by=username,
     )
     logger.info("Script MR #%d created: %s/%s", mr_iid, team, script_name)
+    if db.is_available() and "error" not in sub_result:
+        audit_log.submission_created("script_mr", sub_result["id"], username,
+                                      pending_count=len(db.get_pending_script_submissions()))
     return jsonify({"status": "mr_created", "mr_url": mr_url}), 201
 
 
@@ -1041,6 +1089,9 @@ def api_sites_submit():
         return jsonify(result), 502
 
     logger.info("Site submission created by %s: %s (%s)", username, name, url)
+    if db.is_available():
+        audit_log.submission_created("webapp", result["id"], username,
+                                      pending_count=len(db.get_pending_submissions()))
     return jsonify({"status": "submitted", "id": result["id"]}), 201
 
 
@@ -1067,6 +1118,9 @@ def api_sites_review():
     if "error" in result:
         return jsonify(result), 502
 
+    audit_log.submission_reviewed("webapp", int(submission_id),
+                                   status=result.get("status", "approved" if approve else "rejected"),
+                                   actor=reviewer, pending_count=len(db.get_pending_submissions()))
     return jsonify(result), 200
 
 
@@ -1147,7 +1201,10 @@ def api_scripts_approve():
         db.update_script_submission_status(int(sub_id), "approved")
         # Trigger script reload so new script appears immediately
         script_store.load_all()
-        logger.info("Script MR %d merged by %s", sub["mr_iid"], auth.get_current_username())
+        reviewer = auth.get_current_username()
+        logger.info("Script MR %d merged by %s", sub["mr_iid"], reviewer)
+        audit_log.submission_reviewed("script_mr", int(sub_id), status="approved", actor=reviewer,
+                                       pending_count=len(db.get_pending_script_submissions()))
         return jsonify({"status": "merged", "mr": result}), 200
     except Exception as e:
         logger.error("Failed to merge MR %d: %s", sub.get("mr_iid"), e)
@@ -1164,6 +1221,9 @@ def api_scripts_reject():
     if not sub_id:
         return jsonify({"error": "Missing id"}), 400
     db.update_script_submission_status(int(sub_id), "rejected")
+    audit_log.submission_reviewed("script_mr", int(sub_id), status="rejected",
+                                   actor=auth.get_current_username(),
+                                   pending_count=len(db.get_pending_script_submissions()))
     return jsonify({"status": "rejected"}), 200
 
 
@@ -1246,6 +1306,9 @@ def api_scripts_runs_approve():
     _update_run_approval_status(approval_id, "approved", reviewer, final_args=edited_args)
     logger.info("Run approval %d (%s/%s) approved by %s",
                 approval_id, item["team"], item["script_name"], reviewer)
+    if db.is_available():
+        audit_log.submission_reviewed("script_run", approval_id, status="approved", actor=reviewer,
+                                       pending_count=len(db.get_pending_run_approvals()))
     return jsonify({"status": "approved"}), 200
 
 
@@ -1275,7 +1338,136 @@ def api_scripts_runs_reject():
     _update_run_approval_status(approval_id, "rejected", reviewer)
     logger.info("Run approval %d (%s/%s) rejected by %s",
                 approval_id, item["team"], item["script_name"], reviewer)
+    if db.is_available():
+        audit_log.submission_reviewed("script_run", approval_id, status="rejected", actor=reviewer,
+                                       pending_count=len(db.get_pending_run_approvals()))
     return jsonify({"status": "rejected"}), 200
+
+
+# ── "My Requests" / "History" ───────────────────────────────────────────────
+# Unifies the 3 separate submission kinds (web apps, script MRs, script runs)
+# into one feed per user, each item tagged `kind` so the frontend can render
+# type-appropriate detail. "Active" (my requests) vs "history" is driven by
+# each kind's own notion of done -- a webapp/script MR is done the moment an
+# admin reviews it; a script run isn't done until its workflow itself
+# reaches a terminal phase (see run_tracker.py), review is just the gate.
+
+def _with_arg_defs(run: dict) -> dict:
+    """Pairs a run's submitted args with its script's current arg
+    definitions (type, required, options, ...) -- same as
+    api_scripts_runs_pending does for the admin queue -- so the "my
+    requests" editor can render proper type-aware fields instead of raw
+    text, for a run that's still pending (only pending ones are editable)."""
+    script_def = script_store.get_script(run["team"], run["script_name"])
+    run["arg_defs"] = script_def.get("args", []) if script_def else []
+    return run
+
+
+def _my_active_items(username: str) -> list:
+    items = []
+    if db.is_available():
+        items += [{**s, "kind": "webapp"}    for s in db.get_my_active_site_submissions(username)]
+        items += [{**s, "kind": "script_mr"} for s in db.get_my_active_script_submissions(username)]
+        items += [{**_with_arg_defs(r), "kind": "script_run"} for r in db.get_my_active_runs(username)]
+    else:
+        items += [{**_with_arg_defs(r), "kind": "script_run"} for r in _get_local_my_runs(username, active=True)]
+    items.sort(key=lambda x: str(x.get("submitted_at") or ""), reverse=True)
+    return items
+
+
+def _my_history_items(username: str) -> list:
+    items = []
+    if db.is_available():
+        items += [{**s, "kind": "webapp"}     for s in db.get_my_site_submission_history(username)]
+        items += [{**s, "kind": "script_mr"}  for s in db.get_my_script_submission_history(username)]
+        items += [{**r, "kind": "script_run"} for r in db.get_my_run_history(username)]
+    else:
+        items += [{**r, "kind": "script_run"} for r in _get_local_my_runs(username, active=False)]
+    items.sort(key=lambda x: str(x.get("submitted_at") or ""), reverse=True)
+    return items
+
+
+@app.route("/api/my/requests")
+def api_my_requests():
+    return jsonify(_my_active_items(auth.get_current_username()))
+
+
+@app.route("/api/my/history")
+def api_my_history():
+    return jsonify(_my_history_items(auth.get_current_username()))
+
+
+@app.route("/api/my/requests/run/<int:run_id>/logs")
+def api_my_run_logs(run_id):
+    """
+    Live pod-log stream for one run, relayed from Argo's own log-stream
+    endpoint as Server-Sent Events -- see argo_client.stream_workflow_logs
+    for why this goes through Argo rather than the Kubernetes API directly.
+    Open to the run's own submitter or an admin; everyone else gets a plain
+    404 rather than a 403, so this doesn't confirm/deny that a given run id
+    exists to someone it isn't theirs.
+
+    EventSource (used client-side) can't send custom headers, so this
+    relies on the same cookie-based session every other Eden route already
+    authenticates with -- no separate token handling needed here.
+    """
+    if not db.is_available():
+        return jsonify({"error": "Database unavailable"}), 503
+    username = auth.get_current_username()
+    run = db.get_run_by_id(run_id)
+    if not run or (run["submitted_by"] != username and not auth.is_admin()):
+        return jsonify({"error": "Run not found"}), 404
+
+    def generate():
+        for entry in argo_client.stream_workflow_logs(run["namespace"], run["workflow_name"], run.get("argo_url")):
+            yield f"data: {json.dumps(entry)}\n\n"
+        yield "event: done\ndata: {}\n\n"
+
+    resp = Response(generate(), mimetype="text/event-stream")
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["X-Accel-Buffering"] = "no"  # in case this ever sits behind nginx -- don't buffer the stream
+    return resp
+
+
+@app.route("/api/my/requests/run/<int:run_id>/edit", methods=["POST"])
+def api_my_run_edit(run_id):
+    """Lets a user fix their own run's arguments while it's still sitting
+    in the pending-review queue -- before an admin has looked at it. Once
+    reviewed (either way), db.edit_my_run_args's WHERE clause stops
+    matching and this 404s -- there's nothing left to edit."""
+    if not db.is_available():
+        return jsonify({"error": "Database unavailable"}), 503
+    data = request.get_json(silent=True) or {}
+    args = data.get("args")
+    if args is None:
+        return jsonify({"error": "Missing args"}), 400
+    ok = db.edit_my_run_args(run_id, auth.get_current_username(), args)
+    if not ok:
+        return jsonify({"error": "Request not found, not yours, or already reviewed"}), 404
+    return jsonify({"status": "updated"}), 200
+
+
+@app.route("/api/my/requests/site/<int:submission_id>/edit", methods=["POST"])
+def api_my_site_edit(submission_id):
+    """Same idea as the run editor above, for a pending web app submission's
+    own fields (name/url/tags/banner/etc.)."""
+    if not db.is_available():
+        return jsonify({"error": "Database unavailable"}), 503
+    data = request.get_json(silent=True) or {}
+    ok = db.edit_my_site_submission(
+        submission_id, auth.get_current_username(),
+        name=(data.get("name") or "").strip() or None,
+        url=(data.get("url") or "").strip() or None,
+        tags=data.get("tags"),
+        favicon_url=(data.get("favicon_url") or "").strip() or None,
+        group_name=(data.get("group_name") or "").strip() or None,
+        group_display_name=(data.get("group_display_name") or "").strip() or None,
+        env_label=(data.get("env_label") or "").strip() or None,
+        env_color=(data.get("env_color") or "").strip() or None,
+    )
+    if not ok:
+        return jsonify({"error": "Submission not found, not yours, or already reviewed"}), 404
+    return jsonify({"status": "updated"}), 200
 
 
 @app.route("/api/admin/status")

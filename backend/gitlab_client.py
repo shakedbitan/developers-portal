@@ -402,18 +402,54 @@ def delete_script(team: str, script_name: str, requested_by: str) -> dict:
         logger.error("Failed to open delete MR: %d %s", resp.status_code, resp.text[:300])
         return {"error": f"Failed to open MR: {_error_message(resp)}"}
 
-    mr_iid = resp.json().get("iid")
+    mr_data = resp.json()
+    mr_iid  = mr_data.get("iid")
+    mr_url  = mr_data.get("web_url", "")
 
     # 4. Merge immediately -- see docstring above for why this skips the
     # usual human-review step.
-    try:
-        merge_mr(mr_iid)
-    except requests.HTTPError as e:
-        logger.error("Delete MR !%s opened but auto-merge failed: %s", mr_iid, e)
-        return {"error": f"Delete MR !{mr_iid} was opened but could not be auto-merged: {e}"}
+    #
+    # GitLab returns 405 (not raw text -- a real documented response code)
+    # when a brand-new MR isn't mergeable *yet*: right after opening one,
+    # its mergeability is still being computed, and if this project requires
+    # a pipeline to pass before merge, that pipeline has had zero time to
+    # even start. A couple of short retries absorbs the "still computing"
+    # case; if it's still 405 after that, the block is real (pipeline still
+    # running, approval required, etc.) -- Eden shouldn't try to force that,
+    # the MR is left open for an admin to merge in GitLab once it clears.
+    last_error = None
+    for attempt in range(3):
+        try:
+            merge_mr(mr_iid)
+            logger.info("Script %s/%s deleted (MR !%s merged)", team, script_name, mr_iid)
+            return {"ok": True, "mr_iid": mr_iid, "mr_url": mr_url}
+        except requests.HTTPError as e:
+            last_error = e
+            status = e.response.status_code if e.response is not None else None
+            if status != 405 or attempt == 2:
+                break
+            logger.info("Delete MR !%s not mergeable yet (405), retrying (%d/3)...", mr_iid, attempt + 1)
+            time.sleep(2)
 
-    logger.info("Script %s/%s deleted (MR !%s merged)", team, script_name, mr_iid)
-    return {"ok": True, "mr_iid": mr_iid}
+    status = last_error.response.status_code if last_error is not None and last_error.response is not None else None
+    if status == 405:
+        logger.warning("Delete MR !%s opened but still not mergeable after retries -- "
+                        "likely waiting on a required pipeline/approval: %s", mr_iid, last_error)
+        return {
+            "error": (
+                f"Delete MR !{mr_iid} was opened, but this project's merge checks "
+                f"(pipeline and/or required approvals) haven't cleared yet. "
+                f"Merge it in GitLab once they do: {mr_url}"
+            ),
+            "mr_iid": mr_iid,
+            "mr_url": mr_url,
+        }
+    logger.error("Delete MR !%s opened but auto-merge failed: %s", mr_iid, last_error)
+    return {
+        "error": f"Delete MR !{mr_iid} was opened but could not be auto-merged: {last_error}",
+        "mr_iid": mr_iid,
+        "mr_url": mr_url,
+    }
 
 
 def merge_mr(mr_iid: int) -> dict:

@@ -235,6 +235,26 @@ def init_schema():
     -- until someone remembers to remove it by hand. IF NOT EXISTS so this
     -- is a no-op once it's already been added.
     ALTER TABLE sites ADD COLUMN IF NOT EXISTS banner_set_at TIMESTAMP;
+
+    -- "My Requests" / "History" support -- script_run_approvals used to
+    -- only ever get a row for scripts with approval_required: true; a
+    -- fire-and-forget run had zero record of itself anywhere in Eden once
+    -- submitted. requires_approval lets a row exist either way (inserted
+    -- with status='approved' immediately when false, see create_run_approval)
+    -- so "my requests" can show every run a user submitted, not just the
+    -- ones that needed a reviewer. workflow_phase/phase_checked_at are kept
+    -- current by a background poller against Argo (see run_tracker.py);
+    -- resolved_at is when a run left "active" -- rejected (immediately), or
+    -- workflow_phase reached a terminal Argo phase -- which is what actually
+    -- drives the my-requests -> history split (approval alone isn't "done",
+    -- the workflow still has to finish running).
+    -- ADD COLUMN ... NOT NULL DEFAULT TRUE backfills existing rows with
+    -- TRUE automatically (correct: a row could only have existed pre-this
+    -- migration by having been approval-required in the first place).
+    ALTER TABLE script_run_approvals ADD COLUMN IF NOT EXISTS requires_approval BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE script_run_approvals ADD COLUMN IF NOT EXISTS workflow_phase TEXT;
+    ALTER TABLE script_run_approvals ADD COLUMN IF NOT EXISTS phase_checked_at TIMESTAMP;
+    ALTER TABLE script_run_approvals ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP;
     """
     try:
         with get_conn() as conn:
@@ -502,6 +522,70 @@ def review_submission(submission_id: int, approve: bool, reviewer: str) -> dict:
         return {"error": str(e)}
 
 
+_SITE_SUBMISSION_COLUMNS = """id, name, url, favicon_url, tags, submitted_by, submitted_at,
+                              status, reviewed_by, reviewed_at, group_name, group_display_name,
+                              env_label, env_color"""
+
+
+def get_my_active_site_submissions(username: str) -> list[dict]:
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    f"""SELECT {_SITE_SUBMISSION_COLUMNS} FROM site_submissions
+                       WHERE submitted_by = %s AND status = 'pending'
+                       ORDER BY submitted_at DESC""",
+                    (username,),
+                )
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error("get_my_active_site_submissions failed: %s", e)
+        return []
+
+
+def get_my_site_submission_history(username: str, limit: int = 100) -> list[dict]:
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    f"""SELECT {_SITE_SUBMISSION_COLUMNS} FROM site_submissions
+                       WHERE submitted_by = %s AND status != 'pending'
+                       ORDER BY reviewed_at DESC LIMIT %s""",
+                    (username, limit),
+                )
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error("get_my_site_submission_history failed: %s", e)
+        return []
+
+
+def edit_my_site_submission(submission_id: int, username: str, **fields) -> bool:
+    """Same ownership-in-the-WHERE-clause pattern as edit_my_run_args --
+    only the submitter, and only while still pending review."""
+    settable = {"name", "url", "tags", "favicon_url", "group_name",
+                "group_display_name", "env_label", "env_color"}
+    sets, vals = [], []
+    for key, value in fields.items():
+        if key in settable and value is not None:
+            sets.append(f"{key} = %s")
+            vals.append(value)
+    if not sets:
+        return True
+    vals += [submission_id, username]
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""UPDATE site_submissions SET {', '.join(sets)}
+                       WHERE id = %s AND submitted_by = %s AND status = 'pending'""",
+                    vals,
+                )
+                return cur.rowcount > 0
+    except Exception as e:
+        logger.error("edit_my_site_submission failed: %s", e)
+        return False
+
+
 # ── User stars ───────────────────────────────────────────────────────────────
 
 def get_user_stars(username: str) -> list[dict]:
@@ -616,6 +700,41 @@ def get_pending_script_submissions() -> list[dict]:
         return []
 
 
+_SCRIPT_SUBMISSION_COLUMNS = "id, script_name, team, language, mr_url, mr_iid, submitted_by, submitted_at, status"
+
+
+def get_my_active_script_submissions(username: str) -> list[dict]:
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    f"""SELECT {_SCRIPT_SUBMISSION_COLUMNS} FROM script_submissions
+                       WHERE submitted_by = %s AND status = 'pending'
+                       ORDER BY submitted_at DESC""",
+                    (username,),
+                )
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error("get_my_active_script_submissions failed: %s", e)
+        return []
+
+
+def get_my_script_submission_history(username: str, limit: int = 100) -> list[dict]:
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    f"""SELECT {_SCRIPT_SUBMISSION_COLUMNS} FROM script_submissions
+                       WHERE submitted_by = %s AND status != 'pending'
+                       ORDER BY submitted_at DESC LIMIT %s""",
+                    (username, limit),
+                )
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error("get_my_script_submission_history failed: %s", e)
+        return []
+
+
 def update_script_submission_status(submission_id: int, status: str) -> bool:
     try:
         with get_conn() as conn:
@@ -637,16 +756,29 @@ def update_script_submission_status(submission_id: int, status: str) -> bool:
 
 def create_run_approval(team: str, script_name: str, args: dict,
                          workflow_name: str, namespace: str, submitted_by: str,
-                         argo_url: str | None = None) -> dict:
+                         argo_url: str | None = None, requires_approval: bool = True) -> dict:
+    """
+    Creates the tracking row for a submitted run -- called for *every*
+    submission now (see app.py's api_scripts_submit), not just ones needing
+    approval. A fire-and-forget script (requires_approval=False) starts
+    life already 'approved' -- there's no reviewer step to wait through,
+    Argo is already running it -- so it shows up in "my requests" as
+    active/in-progress and moves to history once run_tracker's poller sees
+    its workflow_phase go terminal, exactly like an approval-gated run does
+    after being approved.
+    """
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
+                initial_status = "pending" if requires_approval else "approved"
                 cur.execute(
                     """INSERT INTO script_run_approvals
-                       (team, script_name, args, workflow_name, namespace, submitted_by, argo_url)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                       (team, script_name, args, workflow_name, namespace, submitted_by, argo_url,
+                        requires_approval, status)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
                     (team, script_name, psycopg2.extras.Json(args),
-                     workflow_name, namespace, submitted_by, argo_url),
+                     workflow_name, namespace, submitted_by, argo_url,
+                     requires_approval, initial_status),
                 )
                 return {"id": cur.fetchone()[0]}
     except Exception as e:
@@ -674,21 +806,30 @@ def update_run_approval_status(approval_id: int, status: str, reviewed_by: str,
                                 final_args: dict | None = None) -> bool:
     """final_args, when given, records what was actually sent to Argo on
     approval -- may differ from the submitter's original args if an admin
-    edited a value before approving."""
+    edited a value before approving.
+
+    A rejection is resolved immediately (no workflow ever runs) -- stamps
+    resolved_at right here. An approval is NOT resolved yet: the workflow
+    still has to actually finish running, which run_tracker's poller
+    detects and stamps resolved_at for separately once workflow_phase goes
+    terminal. That's the whole point of the two-stage design: "approved"
+    just means the gate opened, not that the run is done.
+    """
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
+                resolved_clause = ", resolved_at = NOW()" if status == "rejected" else ""
                 if final_args is not None:
                     cur.execute(
-                        """UPDATE script_run_approvals
-                           SET status = %s, reviewed_by = %s, reviewed_at = NOW(), args = %s
+                        f"""UPDATE script_run_approvals
+                           SET status = %s, reviewed_by = %s, reviewed_at = NOW(), args = %s{resolved_clause}
                            WHERE id = %s""",
                         (status, reviewed_by, psycopg2.extras.Json(final_args), approval_id),
                     )
                 else:
                     cur.execute(
-                        """UPDATE script_run_approvals
-                           SET status = %s, reviewed_by = %s, reviewed_at = NOW()
+                        f"""UPDATE script_run_approvals
+                           SET status = %s, reviewed_by = %s, reviewed_at = NOW(){resolved_clause}
                            WHERE id = %s""",
                         (status, reviewed_by, approval_id),
                     )
@@ -698,6 +839,131 @@ def update_run_approval_status(approval_id: int, status: str, reviewed_by: str,
         return True
     except Exception as e:
         logger.error("update_run_approval_status failed: %s", e)
+        return False
+
+
+# Argo phases that mean "this run is done, one way or another" -- matches
+# the phase strings Argo itself uses (see argo_client.get_workflow_status).
+TERMINAL_WORKFLOW_PHASES = ("Succeeded", "Failed", "Error")
+
+
+def get_runs_awaiting_phase_poll() -> list[dict]:
+    """
+    Every approved-and-not-yet-resolved run -- i.e. actually executing (or
+    about to) in Argo -- for run_tracker's poller to check. Pending
+    (not-yet-reviewed) rows are excluded: nothing's running for those yet,
+    there's no phase to poll.
+    """
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """SELECT id, team, script_name, workflow_name, namespace, argo_url,
+                              submitted_by, workflow_phase
+                       FROM script_run_approvals
+                       WHERE status = 'approved' AND resolved_at IS NULL"""
+                )
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error("get_runs_awaiting_phase_poll failed: %s", e)
+        return []
+
+
+def update_run_phase(run_id: int, phase: str | None) -> bool:
+    """Records the latest known Argo phase for a run. Stamps resolved_at
+    the moment that phase first becomes terminal -- this (not the earlier
+    approval) is what actually moves a run from "my requests" to
+    "history"."""
+    resolved = phase in TERMINAL_WORKFLOW_PHASES
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                resolved_clause = ", resolved_at = NOW()" if resolved else ""
+                cur.execute(
+                    f"""UPDATE script_run_approvals
+                       SET workflow_phase = %s, phase_checked_at = NOW(){resolved_clause}
+                       WHERE id = %s""",
+                    (phase, run_id),
+                )
+                return cur.rowcount > 0
+    except Exception as e:
+        logger.error("update_run_phase failed: %s", e)
+        return False
+
+
+_RUN_COLUMNS = """id, team, script_name, args, workflow_name, namespace, argo_url,
+                  submitted_by, submitted_at, status, requires_approval,
+                  workflow_phase, phase_checked_at, reviewed_by, reviewed_at, resolved_at"""
+
+
+def get_run_by_id(run_id: int) -> dict | None:
+    """A single run regardless of status/ownership -- callers (the log-
+    stream route) do their own permission check against submitted_by."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(f"SELECT {_RUN_COLUMNS} FROM script_run_approvals WHERE id = %s", (run_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+    except Exception as e:
+        logger.error("get_run_by_id failed: %s", e)
+        return None
+
+
+def get_my_active_runs(username: str) -> list[dict]:
+    """Runs this user submitted that aren't resolved yet -- awaiting review,
+    or approved and still executing. Ordered newest-first, matching an
+    inbox rather than the admin queues' oldest-first (review fairness isn't
+    the concern here, "what did I just do" is)."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    f"""SELECT {_RUN_COLUMNS} FROM script_run_approvals
+                       WHERE submitted_by = %s AND resolved_at IS NULL
+                       ORDER BY submitted_at DESC""",
+                    (username,),
+                )
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error("get_my_active_runs failed: %s", e)
+        return []
+
+
+def get_my_run_history(username: str, limit: int = 100) -> list[dict]:
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    f"""SELECT {_RUN_COLUMNS} FROM script_run_approvals
+                       WHERE submitted_by = %s AND resolved_at IS NOT NULL
+                       ORDER BY resolved_at DESC LIMIT %s""",
+                    (username, limit),
+                )
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error("get_my_run_history failed: %s", e)
+        return []
+
+
+def edit_my_run_args(run_id: int, username: str, args: dict) -> bool:
+    """Lets the *submitter* fix their own run's arguments while it's still
+    sitting in the pending-review queue -- separate from (and earlier than)
+    the reviewer's own ability to edit args at approval time. Scoped to
+    submitted_by = username AND status = 'pending' in the WHERE clause
+    itself, not a separate ownership check, so this can't be tricked into
+    editing someone else's row or a row that's already been reviewed."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE script_run_approvals SET args = %s
+                       WHERE id = %s AND submitted_by = %s AND status = 'pending'""",
+                    (psycopg2.extras.Json(args), run_id, username),
+                )
+                return cur.rowcount > 0
+    except Exception as e:
+        logger.error("edit_my_run_args failed: %s", e)
         return False
 
 

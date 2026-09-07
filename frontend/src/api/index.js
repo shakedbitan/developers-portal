@@ -57,6 +57,13 @@ export const fetchPendingRuns = () => get('/api/scripts/runs/pending');
 export const approveRun       = (id, args) => post('/api/scripts/runs/approve', { id, args });
 export const rejectRun        = (id) => post('/api/scripts/runs/reject', { id });
 
+// ── My Requests / History -- every webapp/script-MR/run a user has
+// submitted, unified across the 3 kinds and tagged `kind` per item.
+export const fetchMyRequests      = () => get('/api/my/requests');
+export const fetchMyHistory       = () => get('/api/my/history');
+export const editMyRunArgs        = (runId, args) => post(`/api/my/requests/run/${runId}/edit`, { args });
+export const editMySiteSubmission = (id, data) => post(`/api/my/requests/site/${id}/edit`, data);
+
 export const uploadScript = (formData) =>
   fetch('/api/scripts/upload', { method: 'POST', body: formData })
     .then(r => r.json().then(d => {

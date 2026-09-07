@@ -4,7 +4,7 @@
     "scripts": [
       {
         "name": "rotate-secret",
-        "description": "Rotate a Kubernetes secret and restart dependent pods",
+        "description": "dependent pods",
         "language": "python",
         "approval_required": true,
         "dependencies": ["kubernetes", "hvac"],
@@ -22,7 +22,7 @@
             "type": "boolean",
             "required": false,
             "default": "true",
-            "description": "Preview changes without applying them"
+            "description": "lying them"
           }
         ]
       },

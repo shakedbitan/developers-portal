@@ -10,11 +10,14 @@ Tables:
 """
 
 import logging
+import select
 import threading
+import time
 from contextlib import contextmanager
 from typing import Optional
 
 import psycopg2
+import psycopg2.extensions
 import psycopg2.extras
 from psycopg2.pool import SimpleConnectionPool
 
@@ -154,7 +157,8 @@ def init_schema():
         group_name         TEXT,
         group_display_name TEXT,
         env_label          TEXT,
-        env_color          TEXT
+        env_color          TEXT,
+        banner_set_at      TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS site_submissions (
@@ -226,6 +230,11 @@ def init_schema():
     -- Added after script_run_approvals first shipped -- IF NOT EXISTS so
     -- this is a no-op on a fresh install where the column's already there.
     ALTER TABLE script_run_approvals ADD COLUMN IF NOT EXISTS argo_url TEXT;
+    -- Timestamp the "new" banner (tags[1]) was last set -- lets a "new" tag
+    -- auto-expire 60 days after it was applied instead of staying forever
+    -- until someone remembers to remove it by hand. IF NOT EXISTS so this
+    -- is a no-op once it's already been added.
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS banner_set_at TIMESTAMP;
     """
     try:
         with get_conn() as conn:
@@ -249,7 +258,9 @@ def get_all_sites() -> list[dict]:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("""
                     SELECT id, name, url, favicon_url, tags,
-                           group_name, group_display_name, env_label, env_color
+                           group_name, group_display_name, env_label, env_color,
+                           (tags[1] = 'new' AND banner_set_at IS NOT NULL
+                            AND NOW() - banner_set_at > INTERVAL '60 days') AS banner_expired
                     FROM sites ORDER BY name ASC
                 """)
                 rows = cur.fetchall()
@@ -259,20 +270,86 @@ def get_all_sites() -> list[dict]:
         return []
 
 
+def get_site_favicon(site_id: int) -> Optional[str]:
+    """Just the favicon_url column for one site -- used by the dedicated
+    favicon-serving route, kept separate from get_all_sites/get_user_stars
+    so a browser's per-image request doesn't need the whole row."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT favicon_url FROM sites WHERE id = %s", (site_id,))
+                row = cur.fetchone()
+                return row[0] if row else None
+    except Exception as e:
+        logger.error("get_site_favicon failed: %s", e)
+        return None
+
+
+def _normalize_url_for_compare(url: str) -> str:
+    """
+    Collapses the differences that don't make two URLs a meaningfully
+    different site: http:// vs https://, and a trailing slash or not
+    (`http://x.com` == `https://x.com` == `https://x.com/`). Comparison-only
+    -- the real, as-entered URL is still what's stored and used everywhere
+    else (links, favicon fetch, etc.).
+    """
+    u = (url or "").strip()
+    if u.startswith("https://"):
+        u = u[len("https://"):]
+    elif u.startswith("http://"):
+        u = u[len("http://"):]
+    return u.rstrip("/")
+
+
+def site_url_exists(url: str) -> bool:
+    """
+    True if `url` already belongs to a live site OR a submission still
+    awaiting review (scheme and trailing slash ignored, see
+    _normalize_url_for_compare) -- checked at submit time so a duplicate is
+    caught with a clear message instead of silently colliding later.
+    `sites.url` is already UNIQUE at the DB level (see create_site's ON
+    CONFLICT), but that's an *exact* string match -- it neither protects
+    against an http/https or trailing-slash variant of an existing site,
+    nor against two *pending* submissions for the same URL. Normalizing
+    happens in Python, not SQL, since the comparison needs to run against
+    every existing URL either way -- there's no index that makes "ignore
+    scheme and trailing slash" a cheap WHERE clause.
+    """
+    target = _normalize_url_for_compare(url)
+    if not target:
+        return False
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT url FROM sites
+                       UNION ALL
+                       SELECT url FROM site_submissions WHERE status = 'pending'"""
+                )
+                return any(_normalize_url_for_compare(row[0]) == target for row in cur.fetchall())
+    except Exception as e:
+        logger.error("site_url_exists failed: %s", e)
+        return False
+
+
 def create_site(name: str, url: str, favicon_url: str, tags: list, created_by: str, **kwargs) -> dict:
     """Insert a new approved site directly (used when admin approves a submission)."""
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
+                first_tag = tags[0] if tags else None
                 cur.execute(
                     """INSERT INTO sites (name, url, favicon_url, tags, created_by,
-                                         group_name, group_display_name, env_label, env_color)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                         group_name, group_display_name, env_label, env_color,
+                                         banner_set_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
+                               CASE WHEN %s = 'new' THEN NOW() ELSE NULL END)
                        ON CONFLICT (url) DO UPDATE SET name = EXCLUDED.name
                        RETURNING id""",
                     (name, url, favicon_url, tags, created_by,
                      kwargs.get('group_name'), kwargs.get('group_display_name'),
-                     kwargs.get('env_label'), kwargs.get('env_color')),
+                     kwargs.get('env_label'), kwargs.get('env_color'),
+                     first_tag),
                 )
                 site_id = cur.fetchone()[0]
         logger.info("Site created: %s (%s) by %s", name, url, created_by)
@@ -310,7 +387,23 @@ def edit_site(site_id: int, name: str = None, url: str = None,
         sets, vals = [], []
         if name               is not None: sets.append("name = %s");               vals.append(name)
         if url                is not None: sets.append("url = %s");                vals.append(url)
-        if tags               is not None: sets.append("tags = %s");               vals.append(tags)
+        if tags               is not None:
+            sets.append("tags = %s"); vals.append(tags)
+            # Re-stamp banner_set_at only when the banner is actually
+            # changing to/from "new" -- referencing the bare `tags` column
+            # (not the %s above) here reads the row's *pre-update* value,
+            # so an edit that leaves an already-"new" banner alone doesn't
+            # reset its 60-day clock back to today every time.
+            first_tag = tags[0] if tags else None
+            sets.append(
+                """banner_set_at = CASE
+                       WHEN %s = 'new' AND (tags IS NULL OR tags[1] IS DISTINCT FROM 'new') THEN NOW()
+                       WHEN %s IS DISTINCT FROM 'new' THEN NULL
+                       ELSE banner_set_at
+                   END"""
+            )
+            vals.append(first_tag)
+            vals.append(first_tag)
         if favicon_url        is not None: sets.append("favicon_url = %s");        vals.append(favicon_url)
         if group_name         is not None: sets.append("group_name = %s");         vals.append(group_name or None)
         if group_display_name is not None: sets.append("group_display_name = %s"); vals.append(group_display_name or None)
@@ -419,6 +512,8 @@ def get_user_stars(username: str) -> list[dict]:
                 cur.execute(
                     """SELECT s.id, s.name, s.url, s.favicon_url, s.tags,
                               s.group_name, s.group_display_name, s.env_label, s.env_color,
+                              (s.tags[1] = 'new' AND s.banner_set_at IS NOT NULL
+                               AND NOW() - s.banner_set_at > INTERVAL '60 days') AS banner_expired,
                               us.star_order
                        FROM user_stars us
                        JOIN sites s ON s.id = us.site_id
@@ -687,3 +782,82 @@ def get_all_users() -> list[dict]:
     except Exception as e:
         logger.error("get_all_users failed: %s", e)
         return []
+
+
+# ── Cross-pod script reload (Postgres LISTEN/NOTIFY) ────────────────────────
+#
+# script_store's cache is in-memory and per-process. With more than one
+# Eden replica behind a Service, a webhook-triggered reload only ever
+# reaches whichever single pod the Service happened to route it to --
+# every other pod kept serving stale scripts until it was separately
+# reloaded or restarted, with no fixed bound on how long that could take.
+#
+# Postgres NOTIFY is used purely as a trigger, not a data store: no script
+# data is written to or read from Postgres here. Every pod independently
+# still does its own real GitLab fetch (via script_store.reload_async())
+# exactly as a direct webhook call would -- NOTIFY just tells every pod to
+# do that at the same moment, instead of only the one that got the HTTP
+# request.
+
+def notify_scripts_reload() -> None:
+    """Called by whichever pod receives POST /api/scripts/reload, after it
+    reloads its own cache -- tells every other pod's listener (below) to
+    do the same. Best-effort: a failure here just means other pods won't
+    hear about this particular reload until their next one, not something
+    that should fail the reload endpoint itself."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("NOTIFY scripts_reload")
+    except Exception as e:
+        logger.error("notify_scripts_reload failed: %s", e)
+
+
+def listen_for_scripts_reload(on_reload) -> None:
+    """
+    Blocks forever -- run this in a background daemon thread, once, at
+    startup. Holds one dedicated connection outside the normal pool (LISTEN
+    needs a connection that stays open indefinitely, which a connection
+    pool meant for short-lived queries isn't built for) and calls
+    on_reload() every time any pod (including this one) calls
+    notify_scripts_reload().
+
+    Auto-reconnects on any failure -- a listener thread that silently died
+    would leave that one pod permanently deaf to future reloads, which is
+    a worse failure mode than a noisy retry loop.
+    """
+    while True:
+        conn = None
+        try:
+            conn = psycopg2.connect(
+                host=config.DB_HOST, port=config.DB_PORT, dbname=config.DB_NAME,
+                user=config.DB_USER, password=config.DB_PASSWORD, connect_timeout=5,
+            )
+            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+            with conn.cursor() as cur:
+                cur.execute("LISTEN scripts_reload;")
+            logger.info("Listening for scripts_reload notifications")
+
+            while True:
+                # 30s poll timeout just to periodically loop and stay
+                # responsive to e.g. process shutdown -- select() returning
+                # empty here is normal (no notification yet), not an error.
+                if select.select([conn], [], [], 30) == ([], [], []):
+                    continue
+                conn.poll()
+                while conn.notifies:
+                    conn.notifies.pop()
+                    logger.info("Received scripts_reload notification -- reloading")
+                    try:
+                        on_reload()
+                    except Exception as e:
+                        logger.error("scripts_reload on_reload callback failed: %s", e)
+        except Exception as e:
+            logger.error("scripts_reload listener connection lost, retrying in 5s: %s", e)
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        time.sleep(5)

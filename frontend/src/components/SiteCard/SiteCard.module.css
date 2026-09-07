@@ -113,6 +113,29 @@
   text-shadow: 0 1px 4px rgba(0,0,0,.85), 0 0 1px rgba(0,0,0,.6);
 }
 
+/* Environment label row -- same bullet+text language as GroupedSiteCard's
+   envRow, just inline under the name instead of a separate expandable row
+   (this card has no group of members to expand into). */
+.envRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  justify-content: center;
+}
+.envBullet {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex: none;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.15);
+}
+.envText {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Tags */
 .tags {
   display: flex; flex-wrap: wrap; gap: 3px;

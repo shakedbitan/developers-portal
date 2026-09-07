@@ -149,11 +149,13 @@ def _parse_script_yaml(raw: str, team: str, script_name: str, script_path: str, 
             "example":     str(arg.get("example", "")),
             "options":     raw_options,        # list, dict, or (argo_target) list of {name,label,url} — preserved as-is
             "depends_on":  arg.get("depends_on", ""),  # parent arg name if dependent
-            # Marks this select as the Argo-instance picker rather than a
-            # normal runtime arg -- its `options` are {name, label, url}
-            # objects, its chosen value routes the submission instead of
-            # being passed to the script, and app.py strips it out of the
-            # args the script actually receives.
+            # Marks this select as the Argo-instance picker -- its `options`
+            # are {name, label, url} objects, and app.py resolves the
+            # chosen value server-side to pick which Argo instance to
+            # submit to (never trusting a URL from the client). The chosen
+            # value still passes through to the script like any other arg
+            # too, in case the script itself needs to know which target
+            # it's running against (os.getenv in the running container).
             "argo_target": bool(arg.get("argo_target", False)),
         }
         args.append(parsed_arg)

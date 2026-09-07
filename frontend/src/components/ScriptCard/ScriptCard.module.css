@@ -1,3 +1,39 @@
+/* Positioning context for the admin-only Del button below -- .card itself
+   can't hold it directly since .card is a <button> and buttons can't nest.
+   width:100% on both -- a <button> only shrink-wraps its content by
+   default, so without it .card (and .delBtn's right:7px anchor with it)
+   sat narrower than the grid cell instead of filling it. */
+.wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+/* Admin-only delete button, top-right corner -- same hidden-until-hover
+   convention as SiteCard's .delBtn, opacity 0 at rest so it doesn't clutter
+   every card in the grid at once. */
+.delBtn {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 5;
+  padding: 3px 6px;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: var(--radius-xs);
+  background: rgba(239, 68, 68, 0.25);
+  color: #f87171;
+  font-family: var(--font-mono);
+  font-size: 0.52rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s, background .15s;
+}
+.wrap:hover .delBtn { opacity: 1; }
+.delBtn:hover { background: rgba(239, 68, 68, .5); }
+
 /* CRT-glow terminal window, no language/approval badges — just a picture,
    a name on a "$" prompt, and a description as a "#" comment. Deliberately
    stays dark regardless of Eden's light/dark toggle: the scanline texture
@@ -6,6 +42,7 @@
 .card {
   position: relative;
   display: flex; flex-direction: column;
+  width: 100%;
   background:
     repeating-linear-gradient(rgba(255, 255, 255, .018) 0px, rgba(255, 255, 255, .018) 1px, transparent 1px, transparent 3px),
     radial-gradient(120% 90% at 50% -10%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 60%),

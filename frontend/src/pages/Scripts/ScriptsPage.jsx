@@ -4,12 +4,20 @@ import toast from 'react-hot-toast';
 import { ScriptCard } from '../../components/ScriptCard/ScriptCard.jsx';
 import { Modal }      from '../../components/Modal/Modal.jsx';
 import { Button }     from '../../components/Button/Button.jsx';
+import { ConfirmModal } from '../../components/ConfirmModal/ConfirmModal.jsx';
 import {
   submitScript, uploadScript, uploadScriptArgFile,
   fetchPendingScripts, approveScript, rejectScript,
-  fetchPendingRuns, approveRun, rejectRun,
+  fetchPendingRuns, approveRun, rejectRun, deleteScript,
 } from '../../api/index.js';
 import styles from './ScriptsPage.module.css';
+
+// Explicit dateStyle/timeStyle instead of bare toLocaleString() -- some
+// locales' "default" format leans on numeric date shorthand that reads
+// ambiguously at a glance; this guarantees a time (down to the minute)
+// always shows alongside the date.
+const formatDateTime = iso =>
+  new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
 // ── Run modal ─────────────────────────────────────────────────────────────────
 function RunModal({ script, team, open, onClose }) {
@@ -158,8 +166,9 @@ function RunModal({ script, team, open, onClose }) {
                 // Picks which Argo instance this run submits to -- options
                 // are {name, label, url} objects, not plain scalars. Only
                 // the chosen `name` goes in args; the backend resolves the
-                // real URL server-side (never trust a client-supplied URL)
-                // and strips this value out before it reaches the script.
+                // real URL server-side (never trust a client-supplied URL).
+                // The chosen name still reaches the script as a normal arg
+                // too, in case the script needs to know its own target.
                 <select
                   className={styles.runInput}
                   value={args[arg.name] || ''}
@@ -216,10 +225,21 @@ const UPLOAD_INITIAL_FORM = { script_name:'', team:'', language:'', description:
 // One blank argument row for the builder below. `id` is local-only (React
 // key + row identity while editing) and never sent to the backend.
 let argRowId = 0;
+let targetOptionId = 0;
+// One blank {name, label, url} row for an argo_target arg's option list --
+// separate from a plain select's comma-separated `options` string, since
+// each choice here needs to carry a real URL, not just a display value.
+const blankTargetOption = () => ({ id: ++targetOptionId, name: '', label: '', url: '' });
 const blankArgRow = () => ({
   id: ++argRowId,
   name: '', type: 'string', required: false, description: '',
   example: '', unit: '', min: '', max: '', options: '',
+  // Only meaningful when type === 'select'. Marks this as the Argo-instance
+  // picker (see script_store.py/argo_client.py's argo_target handling)
+  // instead of a normal runtime arg -- its options are edited as their own
+  // little list (targetOptions) rather than the plain comma-separated field.
+  argoTarget: false,
+  targetOptions: [blankTargetOption()],
 });
 
 // Turns the builder's rows into exactly the shape backend's /api/scripts/upload
@@ -248,7 +268,16 @@ function buildArgsPayload(rows) {
         if (row.min.trim() !== '') arg.min = Number(row.min);
         if (row.max.trim() !== '') arg.max = Number(row.max);
       }
-      if (row.type === 'select') {
+      if (row.type === 'select' && row.argoTarget) {
+        arg.argo_target = true;
+        arg.options = (row.targetOptions || [])
+          .filter(o => o.name.trim() && o.url.trim())
+          .map(o => ({
+            name:  o.name.trim(),
+            label: o.label.trim() || o.name.trim(),
+            url:   o.url.trim(),
+          }));
+      } else if (row.type === 'select') {
         arg.options = row.options.split(',').map(o => o.trim()).filter(Boolean);
       }
       return arg;
@@ -291,6 +320,18 @@ function UploadModal({ open, onClose, teams }) {
   const addArgRow = () => setArgRows(p => [...p, blankArgRow()]);
   const removeArgRow = (id) => setArgRows(p => p.filter(row => row.id !== id));
   const updateArgRow = (id, patch) => setArgRows(p => p.map(row => (row.id === id ? { ...row, ...patch } : row)));
+
+  const addTargetOption = (rowId) => setArgRows(p => p.map(row =>
+    row.id === rowId ? { ...row, targetOptions: [...row.targetOptions, blankTargetOption()] } : row
+  ));
+  const removeTargetOption = (rowId, optionId) => setArgRows(p => p.map(row =>
+    row.id === rowId ? { ...row, targetOptions: row.targetOptions.filter(o => o.id !== optionId) } : row
+  ));
+  const updateTargetOption = (rowId, optionId, patch) => setArgRows(p => p.map(row =>
+    row.id === rowId
+      ? { ...row, targetOptions: row.targetOptions.map(o => (o.id === optionId ? { ...o, ...patch } : o)) }
+      : row
+  ));
 
   const handleUpload = async () => {
     if (!form.script_name || !form.team || !form.language || !form.description || !scriptFile) {
@@ -459,6 +500,17 @@ function UploadModal({ open, onClose, teams }) {
             )}
 
             {row.type === 'select' && (
+              <label className={styles.checkboxRow}>
+                <input
+                  type="checkbox"
+                  checked={row.argoTarget}
+                  onChange={e => updateArgRow(row.id, { argoTarget: e.target.checked })}
+                />
+                <span>Argo target (routes this run to a specific Argo instance)</span>
+              </label>
+            )}
+
+            {row.type === 'select' && !row.argoTarget && (
               <FormGroup label="Options * (comma-separated)">
                 <input
                   className={styles.input}
@@ -467,6 +519,45 @@ function UploadModal({ open, onClose, teams }) {
                   placeholder="dev, staging, prod"
                 />
               </FormGroup>
+            )}
+
+            {row.type === 'select' && row.argoTarget && (
+              <div className={styles.targetOptionsBox}>
+                <span className={styles.formLabel}>Targets * (name / label / URL)</span>
+                {row.targetOptions.map(opt => (
+                  <div key={opt.id} className={styles.targetOptionRow}>
+                    <input
+                      className={styles.input}
+                      value={opt.name}
+                      onChange={e => updateTargetOption(row.id, opt.id, { name: e.target.value })}
+                      placeholder="site-a"
+                    />
+                    <input
+                      className={styles.input}
+                      value={opt.label}
+                      onChange={e => updateTargetOption(row.id, opt.id, { label: e.target.value })}
+                      placeholder="Site A"
+                    />
+                    <input
+                      className={styles.input}
+                      value={opt.url}
+                      onChange={e => updateTargetOption(row.id, opt.id, { url: e.target.value })}
+                      placeholder="https://argo-site-a.example.com"
+                    />
+                    <button
+                      type="button"
+                      className={styles.argRemove}
+                      disabled={row.targetOptions.length <= 1}
+                      onClick={() => removeTargetOption(row.id, opt.id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                <button type="button" className={styles.addTargetBtn} onClick={() => addTargetOption(row.id)}>
+                  + Add target
+                </button>
+              </div>
             )}
 
             <label className={styles.checkboxRow}>
@@ -488,6 +579,15 @@ function UploadModal({ open, onClose, teams }) {
 function PendingScriptsModal({ open, onClose }) {
   const [list,    setList]    = useState([]);
   const [loading, setLoading] = useState(false);
+  // The pending script awaiting a reject confirmation, or null. Holding
+  // the whole item (not just an id) means the confirmation text can name
+  // the script without a second lookup.
+  const [confirmReject, setConfirmReject] = useState(null);
+  // id of the row currently being approved/rejected -- merging an MR
+  // through GitLab's API genuinely takes a few seconds, and there was no
+  // feedback at all during that wait, so a click looked like it did
+  // nothing until the item finally vanished from the list.
+  const [busyId, setBusyId] = useState(null);
 
   React.useEffect(() => {
     if (!open) return;
@@ -499,11 +599,16 @@ function PendingScriptsModal({ open, onClose }) {
   }, [open]);
 
   const handle = async (id, approve) => {
+    setBusyId(id);
     try {
       await (approve ? approveScript(id) : rejectScript(id));
       toast.success(approve ? 'MR merged!' : 'Rejected');
       setList(prev => prev.filter(s => s.id !== id));
-    } catch (e) { toast.error(e.message); }
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setBusyId(null);
+    }
   };
 
   return (
@@ -511,20 +616,37 @@ function PendingScriptsModal({ open, onClose }) {
            footer={<Button variant="secondary" onClick={onClose}>Close</Button>}>
       {loading ? <p className={styles.loading}>Loading…</p> :
        list.length === 0 ? <p className={styles.empty}>No pending scripts</p> :
-       list.map(s => (
+       list.map(s => {
+         const busy = busyId === s.id;
+         return (
          <div key={s.id} className={styles.pendingItem}>
            <div className={styles.pendingInfo}>
              <span className={styles.pendingName}>{s.script_name}</span>
-             <span className={styles.pendingMeta}>{s.team} · {s.language} · by {s.submitted_by}</span>
+             <span className={styles.pendingMeta}>
+               {s.team} · {s.language} · by {s.submitted_by}
+               {s.submitted_at && ` · ${formatDateTime(s.submitted_at)}`}
+               {busy && ' · merging… this can take a few seconds'}
+             </span>
              {s.mr_url && <a href={s.mr_url} target="_blank" rel="noreferrer" className={styles.mrLink}>View MR ↗</a>}
            </div>
            <div className={styles.pendingActions}>
-             <Button size="sm" onClick={() => handle(s.id, true)}>Approve &amp; Merge</Button>
-             <Button size="sm" variant="danger" onClick={() => handle(s.id, false)}>Reject</Button>
+             <Button size="sm" loading={busy} disabled={busy} onClick={() => handle(s.id, true)}>Approve &amp; Merge</Button>
+             <Button size="sm" variant="danger" disabled={busy} onClick={() => setConfirmReject(s)}>Reject</Button>
            </div>
          </div>
-       ))
+         );
+       })
       }
+
+      {confirmReject && (
+        <ConfirmModal
+          message={`Reject ${confirmReject.script_name}'s submission? This can't be undone.`}
+          confirmLabel="Reject"
+          cancelLabel="Cancel"
+          onConfirm={() => { handle(confirmReject.id, false); setConfirmReject(null); }}
+          onCancel={() => setConfirmReject(null)}
+        />
+      )}
     </Modal>
   );
 }
@@ -545,6 +667,18 @@ function PendingRunsModal({ open, onClose }) {
   const [busyId,       setBusyId]       = useState(null);
   // "<approvalId>:<argName>" of the js_file currently expanded for viewing.
   const [expandedFile, setExpandedFile] = useState(null);
+  // The pending run awaiting a reject confirmation, or null.
+  const [confirmReject, setConfirmReject] = useState(null);
+  // ids of items whose argument list is currently expanded -- collapsed by
+  // default so the panel reads as just "script + submitter" until someone
+  // actually wants to inspect/edit what was submitted.
+  const [expandedItems, setExpandedItems] = useState(() => new Set());
+
+  const toggleExpanded = (id) => setExpandedItems(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const load = useCallback(() => {
     setLoading(true);
@@ -629,20 +763,27 @@ function PendingRunsModal({ open, onClose }) {
        list.map(item => {
          const values = editedArgs[item.id] || item.args;
          const busy   = busyId === item.id;
+         const expanded = expandedItems.has(item.id);
          return (
            <div key={item.id} className={styles.runApprovalItem}>
              <div className={styles.runApprovalHead}>
                <div className={styles.pendingInfo}>
                  <span className={styles.pendingName}>{item.script_name}</span>
-                 <span className={styles.pendingMeta}>{item.team} · submitted by {item.submitted_by}</span>
+                 <span className={styles.pendingMeta}>
+                   {item.team} · submitted by {item.submitted_by}
+                   {item.submitted_at && ` · ${formatDateTime(item.submitted_at)}`}
+                 </span>
                </div>
                <div className={styles.pendingActions}>
+                 <Button size="sm" variant="ghost" onClick={() => toggleExpanded(item.id)}>
+                   {expanded ? 'Hide arguments ▲' : 'View arguments ▼'}
+                 </Button>
                  <Button size="sm" loading={busy} onClick={() => handleApprove(item)}>Approve &amp; Run</Button>
-                 <Button size="sm" variant="danger" disabled={busy} onClick={() => handleReject(item)}>Reject</Button>
+                 <Button size="sm" variant="danger" disabled={busy} onClick={() => setConfirmReject(item)}>Reject</Button>
                </div>
              </div>
 
-             {(item.arg_defs || []).length === 0 ? (
+             {!expanded ? null : (item.arg_defs || []).length === 0 ? (
                <p className={styles.noArgs}>This script has no arguments.</p>
              ) : (
                <div className={styles.runForm}>
@@ -735,17 +876,29 @@ function PendingRunsModal({ open, onClose }) {
          );
        })
       }
+
+      {confirmReject && (
+        <ConfirmModal
+          message={`Reject this run of ${confirmReject.script_name}? This can't be undone.`}
+          confirmLabel="Reject"
+          cancelLabel="Cancel"
+          onConfirm={() => { handleReject(confirmReject); setConfirmReject(null); }}
+          onCancel={() => setConfirmReject(null)}
+        />
+      )}
     </Modal>
   );
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
-export function ScriptsPage({ scripts, isAdmin }) {
+export function ScriptsPage({ scripts, setScripts, isAdmin }) {
   const [runScript,    setRunScript]    = useState(null);
   const [runTeam,      setRunTeam]      = useState('');
   const [uploadOpen,   setUploadOpen]   = useState(false);
   const [pendingOpen,  setPendingOpen]  = useState(false);
   const [pendingRunsOpen, setPendingRunsOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null); // { script, team }
+  const [deleting, setDeleting] = useState(false);
   const location = useLocation();
 
   const teams = Object.keys(scripts);
@@ -754,6 +907,25 @@ export function ScriptsPage({ scripts, isAdmin }) {
     setRunScript(script);
     setRunTeam(team);
   }, []);
+
+  const handleDeleteScript = async () => {
+    if (!confirmDelete || deleting) return;
+    const { script, team } = confirmDelete;
+    setDeleting(true);
+    try {
+      await deleteScript(team, script.folder_name);
+      toast.success(`${script.name} deleted`);
+      setScripts?.(prev => ({
+        ...prev,
+        [team]: (prev[team] || []).filter(s => s.folder_name !== script.folder_name),
+      }));
+      setConfirmDelete(null);
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // Open run modal if navigated here from search result
   useEffect(() => {
@@ -793,7 +965,14 @@ export function ScriptsPage({ scripts, isAdmin }) {
             ) : (
               <div className={styles.grid}>
                 {teamScripts.map((script, i) => (
-                  <ScriptCard key={i} script={script} team={team} onClick={openRun} />
+                  <ScriptCard
+                    key={i}
+                    script={script}
+                    team={team}
+                    onClick={openRun}
+                    isAdmin={isAdmin}
+                    onDelete={(s, t) => setConfirmDelete({ script: s, team: t })}
+                  />
                 ))}
               </div>
             )}
@@ -832,6 +1011,16 @@ export function ScriptsPage({ scripts, isAdmin }) {
         open={pendingRunsOpen}
         onClose={() => setPendingRunsOpen(false)}
       />
+
+      {confirmDelete && (
+        <ConfirmModal
+          message={`Delete "${confirmDelete.script.name}"? This removes it from the GitLab repo and can't be undone.`}
+          confirmLabel={deleting ? 'Deleting…' : 'Delete'}
+          cancelLabel="Cancel"
+          onConfirm={handleDeleteScript}
+          onCancel={() => !deleting && setConfirmDelete(null)}
+        />
+      )}
     </div>
   );
 }

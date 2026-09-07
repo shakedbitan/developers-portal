@@ -75,16 +75,61 @@
 }
 
 .infoIcon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px;
   font-size: 13px;
   color: var(--text-muted);
-  cursor: default;
+  cursor: help;
   position: relative;
   text-transform: none;  /* the label it sits in is uppercase; without this
                              the browser's Unicode case-mapping turns the
                              circled lowercase "i" (ⓘ) into a capital (Ⓘ) */
 }
-/* No custom tooltip — the native title="" attribute on the icon already
-   shows the browser's own tooltip on hover, which is all that's wanted. */
+
+/* Custom tooltip, replacing the native title="" attribute -- that gave the
+   browser's own unstyled tooltip with a ~500ms+ hover delay before it
+   appeared. This one is themed to match the rest of the UI and shows
+   immediately (a quick opacity fade, not a native-timer delay). Content
+   comes from data-tooltip so the icon stays keyboard-accessible too
+   (:focus-visible), which title="" never was without a screen reader. */
+.infoIcon::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  /* Left-anchored, growing rightward. These icons all sit toward the left
+     part of the modal (right after a short label), so there's consistently
+     more room to their right than their left -- centering overflowed the
+     modal's right edge, and right-anchoring (grow-left) overflowed the
+     left edge instead, since there usually isn't 300px of room to the
+     left of a label that starts near the modal's own left padding. */
+  left: -6px;
+  transform: translateY(3px);
+  width: max-content;
+  max-width: 280px;  /* wider than before so long text wraps into fewer, fuller lines, but pulled in a bit from 300 to leave a safety margin against the modal's right edge */
+  padding: 7px 10px;
+  background: var(--surface3);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .1s ease, transform .1s ease;
+  z-index: 50;
+}
+.infoIcon:hover::after,
+.infoIcon:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
 
 .envColorRow {
   display: flex; align-items: center; gap: 8px;

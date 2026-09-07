@@ -19,12 +19,14 @@ Routes:
 
 import base64
 import concurrent.futures
+import hashlib
 import json
 import logging
 import os
 import re
 import sys
 import threading
+from datetime import datetime, timezone
 
 import requests
 import yaml
@@ -111,6 +113,16 @@ def _startup():
         db.init_schema()
         download_catalog.init_schema()
         logger.info("Startup: database ready")
+
+        # 3. Start listening for cross-pod reload notifications (see
+        # db.listen_for_scripts_reload) -- its own dedicated long-lived
+        # connection, separate thread, blocks forever, so this must be
+        # fire-and-forget too, same as the rest of _startup.
+        threading.Thread(
+            target=db.listen_for_scripts_reload,
+            args=(script_store.reload_async,),
+            daemon=True,
+        ).start()
     else:
         logger.error("Startup: database unavailable -- sites/stars features will not work")
 
@@ -138,11 +150,19 @@ def _slug(name: str) -> str:
     return name.lower().replace(" ", "_").replace("-", "_")
 
 
-def _resolve_site_image(name: str, favicon_url: str = "") -> str:
+def _resolve_site_image(name: str, favicon_url: str = "", site_id=None) -> str:
     """
     Priority:
     1. Manual override image in frontend/public/site-images/<slug>.<ext> (or dist/, post-build)
-    2. favicon_url stored in DB (data URL or http URL — both work in <img src>)
+    2. favicon_url stored in DB:
+       - a data: URI (uploaded logo) -> point at /api/sites/<id>/favicon instead of
+         returning the raw base64 inline. Every site card's data URI embedded
+         directly in /api/sites and /api/stars was bloating those responses by
+         however large every uploaded logo is, on every single load, with zero
+         browser caching possible for an inline string. A real URL lets the
+         browser fetch and cache each image exactly once (see the route below).
+       - a plain http(s) URL -> already lightweight and independently
+         cacheable, return as-is.
     3. Placeholder
     """
     slug = _slug(name)
@@ -152,6 +172,8 @@ def _resolve_site_image(name: str, favicon_url: str = "") -> str:
             if os.path.exists(fpath):
                 return f"/site-images/{slug}.{ext}"
     if favicon_url:
+        if favicon_url.startswith("data:") and site_id is not None:
+            return f"/api/sites/{site_id}/favicon"
         return favicon_url
     return "/icons/placeholder.svg"
 
@@ -221,13 +243,13 @@ def _load_sites() -> list:
         if not sites:
             sites = _load_local_sites_fallback()
         for site in sites:
-            site["image_url"] = _resolve_site_image(site["name"], site.get("favicon_url", "") or "")
+            site["image_url"] = _resolve_site_image(site["name"], site.get("favicon_url", "") or "", site["id"])
             # Auto-compute group_display_name if not set
             if site.get("group_name") and not site.get("group_display_name"):
                 site["group_display_name"] = site["group_name"].capitalize()
-            # Attach banner color from config so the frontend doesn't need it
-            banner_val = (site.get("tags") or [None])[0]
-            site["banner_color"] = _BANNER_COLOR.get(banner_val) if banner_val else None
+            # Attach banner label/color from config so the frontend doesn't
+            # need it -- also where an expired "new" banner stops showing.
+            site["banner_label"], site["banner_color"] = _resolve_banner(site)
             # Resolved hex for the env-row bullet/frame in GroupedSiteCard.
             # env_color itself stays as the raw value (e.g. "green") so the
             # Edit modal's <select> can still preselect it correctly.
@@ -382,7 +404,7 @@ def _index_data():
     starred_urls    = {s["url"] for s in db.get_user_stars(username)}
     starred_sites   = db.get_user_stars(username)
     for s in starred_sites:
-        s["image_url"] = _resolve_site_image(s["name"], s.get("favicon_url", "") or "")
+        s["image_url"] = _resolve_site_image(s["name"], s.get("favicon_url", "") or "", s["id"])
     # Remaining sites = all sites minus starred ones (starred shown separately)
     other_sites = [s for s in sites if s["url"] not in starred_urls]
 
@@ -416,14 +438,75 @@ def api_sites():
     return jsonify(_load_sites())
 
 
+def _get_local_favicon(site_id: int):
+    for s in _load_local_sites_fallback():
+        if s["id"] == site_id:
+            return s.get("favicon_url") or None
+    return None
+
+
+@app.route("/api/sites/<int:site_id>/favicon")
+def api_site_favicon(site_id):
+    """
+    Serves an uploaded logo's actual decoded image bytes, instead of every
+    /api/sites and /api/stars response embedding the full base64 data: URI
+    inline for every site with an uploaded (not manually-placed) logo. That
+    bloated both payloads by however large each logo was, on every single
+    load, with zero possibility of browser caching for an inline string.
+    A real per-image URL lets the browser fetch each site's icon once and
+    reuse it from cache afterward -- ETag-based, so an edited/re-uploaded
+    logo (same URL, new bytes) is still picked up correctly, not stuck
+    stale behind a long max-age.
+    """
+    raw = db.get_site_favicon(site_id) if db.is_available() else _get_local_favicon(site_id)
+    if not raw or not raw.startswith("data:"):
+        return jsonify({"error": "No favicon for this site"}), 404
+
+    try:
+        header, b64_data = raw.split(",", 1)
+        mime = header.split(";")[0][len("data:"):] or "image/png"
+        image_bytes = base64.b64decode(b64_data)
+    except Exception:
+        logger.warning("Malformed favicon data URI for site %s", site_id)
+        return jsonify({"error": "Malformed favicon"}), 404
+
+    resp = Response(image_bytes, mimetype=mime)
+    resp.set_etag(hashlib.md5(image_bytes).hexdigest())
+    resp.cache_control.public = True
+    resp.cache_control.max_age = 3600  # re-validate hourly; the ETag catches a real change immediately regardless
+    return resp.make_conditional(request)
+
+
 # Lookup: banner value → color, built once from config
 _BANNER_COLOR = {o["value"]: o["color"] for o in config.BANNER_OPTIONS if o.get("color")}
 
 
+def _resolve_banner(site: dict) -> tuple:
+    """
+    (banner_label, banner_color) to actually show for a site -- (None, None)
+    if there's no banner, or if it's a "new" banner past its 60-day display
+    window. `site["tags"]` itself is left completely untouched either way
+    (banner_expired only decides what's *shown*, computed in SQL by
+    get_all_sites/get_user_stars) -- the Edit modal still needs the real
+    tags[0] to correctly preselect "New" in its banner dropdown, even for
+    a site whose "new" ribbon has already faded off the card.
+    """
+    banner_val = (site.get("tags") or [None])[0]
+    if not banner_val or site.get("banner_expired"):
+        return None, None
+    return banner_val, _BANNER_COLOR.get(banner_val)
+
+
 @app.route("/api/banner-options")
 def api_banner_options():
-    """Return the list of available banner options for site cards."""
-    return jsonify(config.BANNER_OPTIONS)
+    """Return the list of available banner options for site cards. This is
+    process-lifetime-constant (loaded once from config at startup, only
+    changes on a redeploy) but had no caching headers, so the browser
+    refetched it on every single page load for nothing."""
+    resp = jsonify(config.BANNER_OPTIONS)
+    resp.cache_control.public = True
+    resp.cache_control.max_age = 3600
+    return resp
 
 
 # Lookup: env_color value → hex, built once from config
@@ -432,8 +515,13 @@ _ENV_COLOR = {o["value"]: o["color"] for o in config.ENV_COLOR_OPTIONS if o.get(
 
 @app.route("/api/env-color-options")
 def api_env_color_options():
-    """Return the list of available env-row colors for the Submit/Edit modals."""
-    return jsonify(config.ENV_COLOR_OPTIONS)
+    """Return the list of available env-row colors for the Submit/Edit
+    modals. Same as api_banner_options above -- static for the process's
+    lifetime, now actually cacheable."""
+    resp = jsonify(config.ENV_COLOR_OPTIONS)
+    resp.cache_control.public = True
+    resp.cache_control.max_age = 3600
+    return resp
 
 
 @app.route("/api/me")
@@ -473,6 +561,12 @@ def api_scripts_reload():
             logger.warning("Reload rejected -- invalid token")
             return jsonify({"error": "Unauthorized"}), 401
     script_store.reload_async()
+    # With more than one Eden replica, this webhook only ever reaches the
+    # one pod the Service routed it to -- NOTIFY tells every other pod's
+    # listener (started at startup, see below) to reload too, instead of
+    # them staying stale until their own next reload or a restart.
+    if db.is_available():
+        db.notify_scripts_reload()
     return jsonify({"status": "reload started"}), 202
 
 
@@ -502,6 +596,7 @@ def _create_local_run_approval(team, script_name, args, workflow_name, namespace
             "namespace": namespace,
             "argo_url": argo_url,
             "submitted_by": submitted_by,
+            "submitted_at": datetime.now(timezone.utc).isoformat(),
             "status": "pending",
         })
         return {"id": _local_run_approval_next_id}
@@ -570,19 +665,20 @@ def api_scripts_submit():
     # server-side at any point.
 
     # A script may declare one arg as argo_target -- its value picks which
-    # Argo instance to submit to (see script_store._parse_script_yaml),
-    # rather than being a real runtime argument. Resolve it server-side
-    # from the script's own option list (never trust a URL from the
-    # client), and keep it out of what actually reaches the script as args.
+    # Argo instance to submit to (see script_store._parse_script_yaml).
+    # Resolve it server-side from the script's own option list (never trust
+    # a URL from the client) purely for routing the submission -- the
+    # chosen value itself still passes through to the script like any
+    # other arg (so it's available inside the container via os.getenv),
+    # since the script may need to know which target it's running against.
     target_arg = _find_argo_target_arg(script_def)
-    argo_url   = None
+    argo_url    = None
     script_args = user_args
     if target_arg:
         argo_url, _target_option, err = _resolve_argo_target(target_arg, user_args)
         if err:
             return jsonify({"error": "Validation failed",
                              "field_errors": {target_arg["name"]: err}}), 422
-        script_args = {k: v for k, v in user_args.items() if k != target_arg["name"]}
 
     approval_required = script_def.get("approval_required", True)
     result = argo_client.submit_workflow(
@@ -819,7 +915,16 @@ def script_logo(team: str, script_name: str):
         if img_bytes:
             break
     if img_bytes:
-        return Response(img_bytes, content_type="image/png")
+        # This used to have zero caching headers at all, so the browser
+        # re-fetched every script's logo fresh from GitLab on every single
+        # page load -- both a live GitLab round-trip and the full image
+        # bytes, every time, for images that essentially never change.
+        # Same ETag-conditional pattern as /api/sites/<id>/favicon.
+        resp = Response(img_bytes, content_type="image/png")
+        resp.set_etag(hashlib.md5(img_bytes).hexdigest())
+        resp.cache_control.public = True
+        resp.cache_control.max_age = 3600
+        return resp.make_conditional(request)
     for path, ct in [
         (os.path.join("static", "icons", "_logoplaceholder.png"), "image/png"),
         (os.path.join("static", "icons", "_placeholder.svg"),     "image/svg+xml"),
@@ -828,6 +933,31 @@ def script_logo(team: str, script_name: str):
             with open(path, "rb") as f:
                 return Response(f.read(), content_type=ct)
     abort(404)
+
+
+@app.route("/api/scripts/<team>/<script_name>/delete", methods=["POST"])
+def api_scripts_delete(team: str, script_name: str):
+    """Admin-only: removes a script's folder from the GitLab repo entirely
+    (branch, delete every file, commit, open + merge an MR) -- see
+    gitlab_client.delete_script for why this merges immediately instead of
+    going through the usual pending-MR review queue."""
+    if not auth.is_admin():
+        return jsonify({"error": "Admin access required"}), 403
+
+    result = gitlab_client.delete_script(team, script_name, auth.get_current_username())
+    if "error" in result:
+        return jsonify(result), 502
+
+    # Same reload + cross-pod notify as /api/scripts/reload -- an admin
+    # deleting a script wants it gone from their own screen immediately,
+    # not after the next webhook/reload cycle.
+    script_store.reload_async()
+    if db.is_available():
+        db.notify_scripts_reload()
+
+    logger.info("Script %s/%s deleted by %s (MR !%s)",
+                team, script_name, auth.get_current_username(), result.get("mr_iid"))
+    return jsonify({"status": "deleted", "mr_iid": result.get("mr_iid")}), 200
 
 
 @app.route("/download/<path:smb_path>")
@@ -883,6 +1013,8 @@ def api_sites_submit():
         return jsonify({"error": "Name and URL are required"}), 400
     if not url.startswith(("http://", "https://")):
         return jsonify({"error": "URL must start with http:// or https://"}), 400
+    if db.is_available() and db.site_url_exists(url):
+        return jsonify({"error": "There's already a web app with this URL"}), 409
 
     # Validate base64 image if provided
     if favicon_data:
@@ -1105,17 +1237,8 @@ def api_scripts_runs_approve():
     if not item:
         return jsonify({"error": "Approval request not found"}), 404
 
-    # Same as submit: the argo_target arg (if any) is submission-routing
-    # metadata, not a real script argument -- exclude it from what actually
-    # gets exported as env vars, same as api_scripts_submit does.
-    script_def = script_store.get_script(item["team"], item["script_name"])
-    target_arg = _find_argo_target_arg(script_def) if script_def else None
-    resume_args = edited_args
-    if target_arg:
-        resume_args = {k: v for k, v in edited_args.items() if k != target_arg["name"]}
-
     result = argo_client.resume_workflow(item["namespace"], item["workflow_name"], "YES",
-                                          resume_args, item.get("argo_url"))
+                                          edited_args, item.get("argo_url"))
     if "error" in result:
         return jsonify(result), 502
 
@@ -1143,14 +1266,8 @@ def api_scripts_runs_reject():
     if not item:
         return jsonify({"error": "Approval request not found"}), 404
 
-    script_def = script_store.get_script(item["team"], item["script_name"])
-    target_arg = _find_argo_target_arg(script_def) if script_def else None
-    reject_args = item["args"]
-    if target_arg:
-        reject_args = {k: v for k, v in item["args"].items() if k != target_arg["name"]}
-
     result = argo_client.resume_workflow(item["namespace"], item["workflow_name"], "NO",
-                                          reject_args, item.get("argo_url"))
+                                          item["args"], item.get("argo_url"))
     if "error" in result:
         return jsonify(result), 502
 
@@ -1250,12 +1367,11 @@ def api_stars_get():
     username = auth.get_current_username()
     stars = db.get_user_stars(username) if db.is_available() else _get_local_stars(username)
     for s in stars:
-        s["image_url"] = _resolve_site_image(s["name"], s.get("favicon_url") or "")
+        s["image_url"] = _resolve_site_image(s["name"], s.get("favicon_url") or "", s["id"])
         # Auto-compute group_display_name if not set
         if s.get("group_name") and not s.get("group_display_name"):
             s["group_display_name"] = s["group_name"].capitalize()
-        banner_val = (s.get("tags") or [None])[0]
-        s["banner_color"] = _BANNER_COLOR.get(banner_val) if banner_val else None
+        s["banner_label"], s["banner_color"] = _resolve_banner(s)
         env_val = s.get("env_color")
         s["env_color_hex"] = _ENV_COLOR.get(env_val) if env_val else None
     return jsonify(stars)

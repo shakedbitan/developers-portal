@@ -19,6 +19,13 @@ import {
 } from '../../api/index.js';
 import styles from './WebAppsPage.module.css';
 
+// Explicit dateStyle/timeStyle instead of bare toLocaleString() -- some
+// locales' "default" format leans on numeric date shorthand that reads
+// ambiguously at a glance; this guarantees a time (down to the minute)
+// always shows alongside the date.
+const formatDateTime = iso =>
+  new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+
 // ── Sortable wrapper for starred cards ────────────────────────────────────────
 function SortableCard({ site, isStarred, onToggleStar, isAdmin, onEdit, onDelete, onRefEl }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: site.id });
@@ -321,7 +328,10 @@ export function WebAppsPage({ sites, setSites, starredSites, starredIds, onToggl
                   onError={e => { e.target.src='/icons/placeholder.svg'; }} />
              <div className={styles.pendingInfo}>
                <span className={styles.pendingName}>{item.name}</span>
-               <span className={styles.pendingMeta}>{item.url} · by {item.submitted_by}</span>
+               <span className={styles.pendingMeta}>
+                 {item.url} · by {item.submitted_by}
+                 {item.submitted_at && ` · ${formatDateTime(item.submitted_at)}`}
+               </span>
              </div>
              <div className={styles.pendingActions}>
                <Button size="sm" onClick={() => handleReview(item.id, true)}>Approve</Button>
@@ -408,7 +418,7 @@ function EnvColorSelect({ value, onChange, options, className }) {
     </div>
   );
 }
-
+   
 function SubmitSiteForm({ form, setForm, file, setFile, bannerOptions, envColorOptions }) {
   const f = (k) => (e) => setForm(p => ({ ...p, [k]: e.target.value }));
   return (
@@ -430,7 +440,8 @@ function SubmitSiteForm({ form, setForm, file, setFile, bannerOptions, envColorO
       <FormGroup label={
         <span style={{display:'flex',alignItems:'center',gap:6}}>
           Group name
-          <span className={styles.infoIcon} title="Apps sharing a group name stack into one card on the home screen. Leave blank for standalone.">i</span>
+          <span className={styles.infoIcon} tabIndex={0}
+                data-tooltip="Apps sharing a group name stack into one card on the home screen. Leave blank for standalone.">i</span>
         </span>
       }>
         <input className={styles.input} value={form.group_name || ''} onChange={f('group_name')}
@@ -443,7 +454,8 @@ function SubmitSiteForm({ form, setForm, file, setFile, bannerOptions, envColorO
       <FormGroup label={
         <span style={{display:'flex',alignItems:'center',gap:6}}>
           Environment Label
-          <span className={styles.infoIcon} title="Shown in the environment picker when the card is expanded.">i</span>
+          <span className={styles.infoIcon} tabIndex={0}
+                data-tooltip="Shown in the environment picker when the card is expanded.">i</span>
         </span>
       }>
         <input className={styles.input} value={form.env_label || ''} onChange={f('env_label')}
@@ -452,7 +464,8 @@ function SubmitSiteForm({ form, setForm, file, setFile, bannerOptions, envColorO
       <FormGroup label={
         <span style={{display:'flex',alignItems:'center',gap:6}}>
           Environment Color
-          <span className={styles.infoIcon} title="Bullet + frame color for this environment's row when the grouped card is expanded.">i</span>
+          <span className={styles.infoIcon} tabIndex={0}
+                data-tooltip="Bullet + frame color for this environment's row when the grouped card is expanded.">i</span>
         </span>
       }>
         <EnvColorSelect className={styles.input} value={form.env_color || ''} options={envColorOptions}
@@ -486,7 +499,8 @@ function EditSiteForm({ form, setForm, file, setFile, bannerOptions, envColorOpt
       <FormGroup label={
         <span style={{display:'flex',alignItems:'center',gap:6}}>
           Group name
-          <span className={styles.infoIcon} title="Apps sharing a group name stack into one card on the home screen. Leave blank for standalone.">i</span>
+          <span className={styles.infoIcon} tabIndex={0}
+                data-tooltip="Apps sharing a group name stack into one card on the home screen. Leave blank for standalone.">i</span>
         </span>
       }>
         <input className={styles.input} value={form.group_name} onChange={f('group_name')}
@@ -500,7 +514,8 @@ function EditSiteForm({ form, setForm, file, setFile, bannerOptions, envColorOpt
       <FormGroup label={
         <span style={{display:'flex',alignItems:'center',gap:6}}>
           Environment Label
-          <span className={styles.infoIcon} title="Shown in the environment picker when the card is expanded.">i</span>
+          <span className={styles.infoIcon} tabIndex={0}
+                data-tooltip="Shown in the environment picker when the card is expanded.">i</span>
         </span>
       }>
         <input className={styles.input} value={form.env_label || ''} onChange={f('env_label')}
@@ -509,7 +524,8 @@ function EditSiteForm({ form, setForm, file, setFile, bannerOptions, envColorOpt
       <FormGroup label={
         <span style={{display:'flex',alignItems:'center',gap:6}}>
           Environment Color
-          <span className={styles.infoIcon} title="Bullet + frame color for this environment's row when the grouped card is expanded.">i</span>
+          <span className={styles.infoIcon} tabIndex={0}
+                data-tooltip="Bullet + frame color for this environment's row when the grouped card is expanded.">i</span>
         </span>
       }>
         <EnvColorSelect className={styles.input} value={form.env_color || ''} options={envColorOptions}

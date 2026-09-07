@@ -48,6 +48,8 @@ export const submitScript       = (data) => post('/api/scripts/submit', data);
 export const fetchPendingScripts = () => get('/api/scripts/pending');
 export const approveScript      = (id) => post('/api/scripts/approve', { id });
 export const rejectScript       = (id) => post('/api/scripts/reject',  { id });
+export const deleteScript       = (team, folderName) =>
+  post(`/api/scripts/${encodeURIComponent(team)}/${encodeURIComponent(folderName)}/delete`, {});
 
 // Run approval -- a submitted run's arguments awaiting review before Argo
 // executes it, distinct from the MR-review pending scripts above.

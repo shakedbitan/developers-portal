@@ -91,7 +91,60 @@ GITLAB_DEFAULT_BRANCH = _optional("GITLAB_DEFAULT_BRANCH", "main")
 
 # ── Argo Workflows ────────────────────────────────────────────────────────────
 ARGO_URL      = _optional("ARGO_URL",      "https://argoworkflow.example")
-ARGO_TOKEN    = _optional("ARGO_TOKEN",    "")   # from secret
+ARGO_TOKEN    = _optional("ARGO_TOKEN",    "")   # from secret -- default instance
+
+
+def _load_argo_tokens() -> dict:
+    """
+    Per-instance tokens for scripts that use an argo_target arg to submit
+    to a different Argo environment than the default -- each environment
+    legitimately needs its own token, and it must never live in
+    script.yaml (that's committed to GitLab, readable by anyone with repo
+    access).
+
+    Each real instance is a *matched pair* of env vars, joined by a shared
+    suffix you pick (e.g. "A", "SITEA" -- the suffix itself is meaningless,
+    it just links the two together):
+      - ARGO_URL_<SUFFIX>    -- plain text, belongs in the ConfigMap
+      - ARGO_TOKEN_<SUFFIX>  -- belongs in a Secret, sealed individually
+
+    This is deliberate, not just style: it keeps every real instance's
+    token as its own independently-sealable Secret key -- rotating one
+    token means resealing exactly one value, not a shared blob holding
+    every instance's token together. It's also decoupled from script.yaml
+    entirely -- any number of argo_target dropdown options (however many
+    differently-named/labeled ones you define) can point their `url` at
+    the same ARGO_URL_<SUFFIX> value and automatically share that
+    instance's token, without needing a secret entry per dropdown option.
+    The number of secret keys tracks the number of *real* Argo instances,
+    never the number of dropdown options.
+    """
+    url_prefix, token_prefix = "ARGO_URL_", "ARGO_TOKEN_"
+    urls = {
+        key[len(url_prefix):]: value.strip()
+        for key, value in os.environ.items()
+        if key.startswith(url_prefix) and value.strip()
+    }
+    tokens = {
+        key[len(token_prefix):]: value.strip()
+        for key, value in os.environ.items()
+        if key.startswith(token_prefix) and key != "ARGO_TOKEN" and value.strip()
+    }
+
+    result = {}
+    for suffix, url in urls.items():
+        token = tokens.get(suffix)
+        if not token:
+            logger.warning(
+                "ARGO_URL_%s is set but ARGO_TOKEN_%s is missing -- "
+                "that Argo instance has no token configured", suffix, suffix,
+            )
+            continue
+        result[url] = token
+    return result
+
+
+ARGO_TOKENS = _load_argo_tokens()   # {argo_url: token} -- URLs from ConfigMap, tokens from Secret
 
 # ── Teams ─────────────────────────────────────────────────────────────────────
 # Comma-separated list of team names, e.g. "db,backend,infra,frontend"
@@ -103,7 +156,7 @@ else:
     logger.info("Teams configured: %s", TEAMS)
 
 # ── Webhook security ──────────────────────────────────────────────────────────
-RELOAD_TOKEN  = _optional("RELOAD_TOKEN", "")   # from secret
+RELOAD_TOKEN   = _optional("RELOAD_TOKEN", "")   # from secret
 if not RELOAD_TOKEN:
     logger.warning("RELOAD_TOKEN not set — /api/scripts/reload endpoint is UNPROTECTED")
 

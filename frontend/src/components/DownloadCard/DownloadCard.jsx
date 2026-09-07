@@ -19,11 +19,10 @@ function itemName(item) {
   return item?.display_name || item?.name || item?.filename || item?.file_name || 'Untitled download';
 }
 
-export function DownloadCard({ item, onSelect }) {
-  const name = itemName(item);
+function itemMeta(item) {
   const variantCount = Number(item?.variant_count ?? item?.variants_count ?? item?.variants?.length);
   const size = formatBytes(item?.size_bytes ?? item?.total_size_bytes ?? item?.size);
-  const metadata = [
+  return [
     Number.isFinite(variantCount) && variantCount > 0
       ? `${variantCount} ${variantCount === 1 ? 'file' : 'variants'}`
       : '',
@@ -34,6 +33,15 @@ export function DownloadCard({ item, onSelect }) {
         : '',
     size,
   ].filter(Boolean);
+}
+
+// Square, no icon, category label + big name + a mono stat footer -- picked
+// from a round of design options (row/tile/badge/mono) previewed side by
+// side in a dev-only block; this was "Option C".
+export function DownloadCard({ item, onSelect }) {
+  const name = itemName(item);
+  const metadata = itemMeta(item);
+  const category = item?.category_label || item?.category || '';
 
   return (
     <button
@@ -42,19 +50,14 @@ export function DownloadCard({ item, onSelect }) {
       onClick={() => onSelect(item)}
       aria-label={`View download options for ${name}`}
     >
-      <span className={styles.content}>
-        <span className={styles.topLine}>
-          <strong className={styles.name} title={name}>{name}</strong>
-        </span>
-        {item?.description && (
-          <span className={styles.description}>{item.description}</span>
-        )}
-        <span className={styles.meta}>
-          {metadata.length > 0 ? metadata.join(' · ') : 'Select to view available files'}
-        </span>
+      {category && <span className={styles.category}>{category}</span>}
+      <span className={styles.name} title={name}>{name}</span>
+      <span className={styles.divider} aria-hidden="true" />
+      <span className={styles.stats}>
+        {metadata.length > 0
+          ? metadata.map((m, i) => <span key={i}>{m}</span>)
+          : <span>Select to view</span>}
       </span>
-
-      <span className={styles.arrow} aria-hidden="true">→</span>
     </button>
   );
 }

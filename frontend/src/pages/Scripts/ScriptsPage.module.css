@@ -219,3 +219,20 @@
   text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 4px;
 }
 .argRemove:hover { text-decoration: underline; }
+
+/* Argo-target option list (Upload New Script -> Type: Select -> Argo
+   target checked) -- each row needs a name/label/url triple instead of
+   the plain comma-separated options a normal select uses. */
+.targetOptionsBox {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.targetOptionRow {
+  display: grid; grid-template-columns: 1fr 1fr 1.6fr auto; gap: 8px; align-items: center;
+}
+.addTargetBtn {
+  align-self: flex-start;
+  background: none; border: 1px dashed var(--border2); border-radius: var(--radius-sm);
+  color: var(--text-muted); font-family: var(--font-mono); font-size: 0.62rem;
+  padding: 5px 10px; cursor: pointer; transition: color .15s, border-color .15s;
+}
+.addTargetBtn:hover { color: var(--accent); border-color: var(--accent); }

@@ -26,7 +26,15 @@ data:
   GITLAB_DEFAULT_BRANCH: "main"
 
   # ── Argo Workflows ───────────────────────────────────
-  ARGO_URL: "https://argoworkflow.example"       # UPDATE THIS
+  ARGO_URL: "https://argoworkflow.example"       # UPDATE THIS -- default instance
+
+  # Extra instances a script's argo_target arg can route to (see
+  # script.yaml's argo_target option, config.py's ARGO_TOKENS). Plain
+  # URLs -- not secret -- paired by suffix with an ARGO_TOKEN_<SUFFIX>
+  # entry in the eden-argo-tokens Secret, not here. Delete these two if
+  # you're not using argo_target on any script.
+  ARGO_URL_A: "https://argo-site-a.example.com"  # UPDATE THIS
+  ARGO_URL_B: "https://argo-site-b.example.com"  # UPDATE THIS
 
   # ── SMB / installs share ─────────────────────────────
   SMB_SERVER: ""          # e.g. fileserver.corp — leave empty to disable

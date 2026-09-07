@@ -322,6 +322,100 @@ def create_script_mr(
     return {"mr_url": mr_url, "iid": mr_iid, "branch": branch}
 
 
+def _list_all_files(path: str, ref: str) -> list[str]:
+    """
+    All blob (file) paths recursively under `path` at `ref`. Needed because
+    the commit-actions API below deletes one file at a time -- there's no
+    "delete this whole folder" action -- but deleting every file under a
+    folder removes the folder too, since git doesn't track empty directories.
+    """
+    url = _api("/repository/tree")
+    resp = _get(url, params={"path": path, "ref": ref, "recursive": "true", "per_page": 100})
+    if resp.status_code != 200:
+        logger.error("GitLab list_tree(recursive) failed: path=%s status=%d body=%s",
+                     path, resp.status_code, resp.text[:300])
+        return []
+    items = resp.json()
+    return [item["path"] for item in items if item.get("type") == "blob"]
+
+
+def delete_script(team: str, script_name: str, requested_by: str) -> dict:
+    """
+    Deletes a script's entire folder from the repo: branch → delete every
+    file under it → commit → open MR → merge immediately.
+
+    Goes through the same branch+MR path create_script_mr uses above
+    rather than committing straight to the default branch -- that branch
+    is commonly protected against direct pushes, same reason the "add new
+    script" flow needs a branch+MR too. Merging immediately here (instead
+    of leaving it in the pending-MR queue for a second click) is safe
+    specifically because only an admin can trigger this at all -- the
+    merged MR is still the audit trail of who deleted what and when.
+    """
+    base_path = f"{config.SCRIPTS_BASE_PATH}/{team}/{script_name}".lstrip("/") if config.SCRIPTS_BASE_PATH else f"{team}/{script_name}"
+    branch = f"delete-{script_name}-{int(time.time())}"
+
+    files = _list_all_files(base_path, config.GITLAB_DEFAULT_BRANCH)
+    if not files:
+        return {"error": f"No files found at {base_path} — nothing to delete"}
+
+    logger.info("Deleting script %s/%s (%d files) branch=%s requested_by=%s",
+                team, script_name, len(files), branch, requested_by)
+
+    # 1. Create branch
+    resp = _post(_api("/repository/branches"), {
+        "branch": branch,
+        "ref": config.GITLAB_DEFAULT_BRANCH,
+    })
+    if resp.status_code not in (200, 201):
+        logger.error("Failed to create branch %s: %d %s", branch, resp.status_code, resp.text[:300])
+        return {"error": f"Failed to create branch: {_error_message(resp)}"}
+
+    # 2. Commit deletions
+    actions = [{"action": "delete", "file_path": f} for f in files]
+    resp = _post(_api("/repository/commits"), {
+        "branch": branch,
+        "commit_message": f"chore: delete script {team}/{script_name} (requested by {requested_by})",
+        "actions": actions,
+    })
+    if resp.status_code not in (200, 201):
+        logger.error("Failed to commit deletions: %d %s", resp.status_code, resp.text[:300])
+        return {"error": f"Failed to commit deletions: {_error_message(resp)}"}
+
+    logger.info("Committed %d file deletions to branch %s", len(actions), branch)
+
+    # 3. Open MR
+    mr_desc = (
+        f"## Delete Script: `{script_name}`\n\n"
+        f"**Team:** {team}  \n"
+        f"**Requested by:** {requested_by}  \n\n"
+        f"---\n*Opened and merged automatically by Eden*"
+    )
+    resp = _post(_api("/merge_requests"), {
+        "source_branch": branch,
+        "target_branch": config.GITLAB_DEFAULT_BRANCH,
+        "title": f"chore: delete script {team}/{script_name}",
+        "description": mr_desc,
+        "remove_source_branch_on_merge": True,
+    })
+    if resp.status_code not in (200, 201):
+        logger.error("Failed to open delete MR: %d %s", resp.status_code, resp.text[:300])
+        return {"error": f"Failed to open MR: {_error_message(resp)}"}
+
+    mr_iid = resp.json().get("iid")
+
+    # 4. Merge immediately -- see docstring above for why this skips the
+    # usual human-review step.
+    try:
+        merge_mr(mr_iid)
+    except requests.HTTPError as e:
+        logger.error("Delete MR !%s opened but auto-merge failed: %s", mr_iid, e)
+        return {"error": f"Delete MR !{mr_iid} was opened but could not be auto-merged: {e}"}
+
+    logger.info("Script %s/%s deleted (MR !%s merged)", team, script_name, mr_iid)
+    return {"ok": True, "mr_iid": mr_iid}
+
+
 def merge_mr(mr_iid: int) -> dict:
     """Merge an open MR by its IID."""
     url = f"{config.GITLAB_URL}/api/v4/projects/{config.GITLAB_REPO_PATH}/merge_requests/{mr_iid}/merge"

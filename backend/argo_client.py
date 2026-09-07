@@ -28,9 +28,19 @@ TEMPLATE_MAP = {
 }
 
 
-def _headers() -> dict:
+def _headers(argo_url: str | None = None) -> dict:
+    """
+    Looks up config.ARGO_TOKENS by the actual instance URL -- multiple
+    argo_target options (different names/labels) can point at the same
+    URL and will automatically share that URL's token. Falls back to the
+    single default ARGO_TOKEN when the URL isn't in that map (every script
+    that doesn't use argo_target at all, since it's always called with the
+    resolved URL -- see submit_workflow's `argo_url = argo_url or
+    config.ARGO_URL` -- never the raw None a caller might pass in).
+    """
+    token = config.ARGO_TOKENS.get(argo_url, config.ARGO_TOKEN) if argo_url else config.ARGO_TOKEN
     return {
-        "Authorization": f"Bearer {config.ARGO_TOKEN}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
 
@@ -61,7 +71,10 @@ def submit_workflow(
         argo_url: overrides config.ARGO_URL -- set when the script defines
             an `argo_target` arg letting the user pick which Argo instance
             to submit to (see app.py's target-resolution logic). Falls back
-            to the single global instance for every other script.
+            to the single global instance for every other script. Also used
+            to look up that instance's own token in config.ARGO_TOKENS (see
+            _headers) -- different Argo environments legitimately need
+            different tokens.
 
     Returns:
         dict with "workflow_name", "namespace", and "argo_url" (the instance
@@ -69,7 +82,13 @@ def submit_workflow(
         status calls against the same server) on success, "error" on failure
     """
     argo_url = argo_url or config.ARGO_URL
-    namespace = f"{team}-workflows"
+    # Kubernetes namespaces are required to be lowercase RFC 1123 labels --
+    # `team` comes straight from wherever the team's name actually is
+    # (GitLab group/folder, TEAMS env var, scripts.json) with no guarantee
+    # it's already lowercase. Without normalizing here, a team like
+    # "Genesys" builds "Genesys-workflows" instead of the real
+    # "genesys-workflows" namespace.
+    namespace = f"{team.lower()}-workflows"
     template_name = TEMPLATE_MAP.get(language)
     if not template_name:
         logger.error("Unknown language '%s' — cannot map to ClusterWorkflowTemplate", language)
@@ -98,7 +117,7 @@ def submit_workflow(
         f"script={script_path}",
         f"args={args_str}",
         f"approval_required={'true' if approval_required else 'false'}",
-        f"teamname={team}",
+        f"teamname={team.lower()}",
         f"resources=cpu:{cpu}, memory:{memory}",
         f"dependencies={deps_str}",
     ]
@@ -121,7 +140,7 @@ def submit_workflow(
     try:
         resp = requests.post(
             url,
-            headers=_headers(),
+            headers=_headers(argo_url),
             json=payload,
             timeout=15,
             verify=False,
@@ -151,12 +170,12 @@ def submit_workflow(
     }
 
 
-def _argo_put(url: str, payload: dict) -> dict:
+def _argo_put(url: str, payload: dict, argo_url: str | None = None) -> dict:
     """Shared PUT helper for the set/resume calls below -- same error
     handling shape as submit_workflow, just factored out since resume_workflow
     now needs it twice."""
     try:
-        resp = requests.put(url, headers=_headers(), json=payload, timeout=15, verify=False)
+        resp = requests.put(url, headers=_headers(argo_url), json=payload, timeout=15, verify=False)
     except requests.exceptions.ConnectionError as e:
         logger.error("Cannot reach Argo at %s: %s", url, e)
         return {"error": f"Cannot reach Argo Workflows at {url}"}
@@ -194,7 +213,8 @@ def resume_workflow(namespace: str, workflow_name: str, approve: str, args: dict
     argo_url must be whatever instance the workflow was actually submitted
     to (see submit_workflow's returned "argo_url") -- for scripts with an
     argo_target arg, that may not be config.ARGO_URL at all, and there's no
-    way to resume a workflow against the wrong server.
+    way to resume a workflow against the wrong server. It also determines
+    which token this authenticates with (see _headers).
     """
     argo_url = argo_url or config.ARGO_URL
     args_parts = [f"{k}={v}" for k, v in args.items()]
@@ -219,7 +239,7 @@ def resume_workflow(namespace: str, workflow_name: str, approve: str, args: dict
                 namespace, workflow_name, approve, argo_url)
     logger.debug("Argo set payload: %s", set_payload)
 
-    set_result = _argo_put(set_url, set_payload)
+    set_result = _argo_put(set_url, set_payload, argo_url)
     if "error" in set_result:
         return set_result
 
@@ -231,7 +251,7 @@ def resume_workflow(namespace: str, workflow_name: str, approve: str, args: dict
     resume_url = f"{argo_url}/api/v1/workflows/{namespace}/{workflow_name}/resume"
     logger.debug("Argo resume payload: %s", resume_payload)
 
-    resume_result = _argo_put(resume_url, resume_payload)
+    resume_result = _argo_put(resume_url, resume_payload, argo_url)
     if "error" in resume_result:
         return resume_result
 
@@ -250,7 +270,8 @@ def get_workflow_status(namespace: str, workflow_name: str, argo_url: str | None
 
     argo_url must match whatever instance the workflow actually lives on
     (see submit_workflow's returned "argo_url") -- same requirement as
-    resume_workflow above.
+    resume_workflow above, and also determines which token this
+    authenticates with (see _headers).
 
     Returns None on any fetch failure (network issue, workflow deleted by
     the podGC/ttlStrategy cleanup, etc.) -- callers should treat that as
@@ -259,7 +280,7 @@ def get_workflow_status(namespace: str, workflow_name: str, argo_url: str | None
     argo_url = argo_url or config.ARGO_URL
     url = f"{argo_url}/api/v1/workflows/{namespace}/{workflow_name}"
     try:
-        resp = requests.get(url, headers=_headers(), timeout=10, verify=False)
+        resp = requests.get(url, headers=_headers(argo_url), timeout=10, verify=False)
     except requests.exceptions.RequestException as e:
         logger.warning("Failed to fetch workflow %s/%s: %s", namespace, workflow_name, e)
         return None

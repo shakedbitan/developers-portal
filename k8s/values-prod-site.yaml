@@ -19,6 +19,21 @@ apps:
       envTo:
         eden
 
+    # Separate from eden-secrets on purpose -- lets Argo instance tokens be
+    # rotated/access-controlled independently of the SMB/other secrets
+    # above. One key per real Argo instance, each sealed individually --
+    # rotating ARGO_TOKEN_A's value never touches ARGO_TOKEN_B's ciphertext.
+    # Suffix (A/B) must match the ARGO_URL_A/ARGO_URL_B pair in the
+    # ConfigMap -- config.py links them by that shared suffix. Scripts
+    # without an argo_target arg never touch these -- they use ARGO_TOKEN
+    # in eden-secrets as today.
+    eden-argo-tokens:
+      data:
+        ARGO_TOKEN_A="aaaaaaaaaaaaaa"
+        ARGO_TOKEN_B="aaaaaaaaaaaaaa"
+      envTo:
+        eden
+
   ingresses:
     eden:
       hosts: 

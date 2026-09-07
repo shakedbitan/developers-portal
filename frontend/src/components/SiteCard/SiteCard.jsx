@@ -37,12 +37,12 @@ export function SiteCard({ site, isStarred, onToggleStar, isAdmin, onEdit, onDel
 
       <a className={styles.card} href={site.url}>
         <div className={styles.imgWrap}>
-          {!small && site.tags?.[0] && (
+          {!small && site.banner_label && (
             <div className={styles.banner}
                  style={{ background: site.banner_color || '#888' }}>
-              {site.tags[0]}
+              {site.banner_label}
             </div>
-          )}
+          )}  
           <img
             src={site.image_url || '/icons/placeholder.svg'}
             alt={site.name}
@@ -51,6 +51,18 @@ export function SiteCard({ site, isStarred, onToggleStar, isAdmin, onEdit, onDel
         </div>
         <div className={styles.label}>
           <span className={styles.name}>{site.name}</span>
+          {/* Environment label (e.g. "Prod"/"Staging") + its colored bullet
+              -- previously only ever shown inside Home's GroupedSiteCard,
+              which only exists for *starred, grouped* sites. Anything else
+              (starred-but-ungrouped, or not starred at all) had nowhere in
+              the UI that surfaced env_label at all, no matter what was
+              picked in the Submit/Edit form's "Environment Label" field. */}
+          {!small && site.env_label && (
+            <span className={styles.envRow}>
+              <span className={styles.envBullet} style={{ background: site.env_color_hex || 'var(--text-muted)' }} />
+              <span className={styles.envText}>{site.env_label}</span>
+            </span>
+          )}
         </div>
       </a>
     </div>
